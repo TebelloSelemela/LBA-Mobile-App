@@ -4,11 +4,13 @@ import os
 import secrets
 import sqlite3
 import re
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from functools import wraps
+from werkzeug.security import generate_password_hash, check_password_hash
 
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, g
 from flask_cors import CORS
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -26,7 +28,7 @@ ADMIN_USERNAME = os.environ.get("LBA_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("LBA_ADMIN_PASSWORD")
 if not ADMIN_PASSWORD:
     raise RuntimeError("LBA_ADMIN_PASSWORD must be set in the environment before starting the backend.")
-API_TOKEN = os.environ.get("LBA_API_TOKEN", secrets.token_urlsafe(32))
+AUTH_TOKEN_DAYS = int(os.environ.get("LBA_AUTH_TOKEN_DAYS", "30"))
 
 
 def create_app():
@@ -41,9 +43,57 @@ def create_app():
     @app.route("/api/auth/login", methods=["POST"])
     def login():
         data = request.get_json(silent=True) or {}
-        if data.get("username") == ADMIN_USERNAME and data.get("password") == ADMIN_PASSWORD:
-            return jsonify({"token": API_TOKEN, "username": ADMIN_USERNAME})
-        return jsonify({"error": "Invalid username or password"}), 401
+        identifier = (data.get("username") or data.get("email") or "").strip()
+        password = data.get("password") or ""
+        if not identifier or not password:
+            return jsonify({"error": "Username/email and password are required"}), 400
+
+        with db() as con:
+            user = con.execute("""
+                SELECT * FROM users
+                WHERE LOWER(username)=LOWER(?) OR LOWER(email)=LOWER(?)
+                LIMIT 1
+            """, (identifier, identifier)).fetchone()
+
+            if not user or not user["is_active"] or not check_password_hash(user["password_hash"], password):
+                return jsonify({"error": "Invalid username/email or password"}), 401
+
+            token = secrets.token_urlsafe(48)
+            token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            now = datetime.utcnow()
+            expires = now.timestamp() + (AUTH_TOKEN_DAYS * 86400)
+            expires_at = datetime.utcfromtimestamp(expires).replace(microsecond=0).isoformat() + "Z"
+            now_text = now.replace(microsecond=0).isoformat() + "Z"
+
+            con.execute("""
+                INSERT INTO auth_tokens(user_id, token_hash, created_at, expires_at)
+                VALUES(?,?,?,?)
+            """, (user["id"], token_hash, now_text, expires_at))
+            con.execute("UPDATE users SET last_login=?, updated_at=? WHERE id=?", (now_text, now_text, user["id"]))
+            con.commit()
+
+        return jsonify({
+            "token": token,
+            "user": public_user(user),
+            "expires_at": expires_at
+        })
+
+
+    @app.route("/api/auth/me")
+    @require_auth
+    def auth_me():
+        return jsonify({"user": public_user(g.current_user)})
+
+
+    @app.route("/api/auth/logout", methods=["POST"])
+    @require_auth
+    def auth_logout():
+        token = bearer_token()
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        with db() as con:
+            con.execute("DELETE FROM auth_tokens WHERE token_hash=?", (token_hash,))
+            con.commit()
+        return jsonify({"logged_out": True})
 
     @app.route("/api/dashboard")
     @require_auth
@@ -428,13 +478,49 @@ def create_app():
     return app
 
 
+def bearer_token():
+    auth = request.headers.get("Authorization", "")
+    return auth.replace("Bearer ", "", 1).strip()
+
+
+def public_user(row):
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "email": row["email"],
+        "full_name": row["full_name"],
+        "role": row["role"],
+        "is_active": bool(row["is_active"]),
+        "email_verified": bool(row["email_verified"]),
+        "created_at": row["created_at"],
+        "last_login": row["last_login"],
+    }
+
+
 def require_auth(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        auth = request.headers.get("Authorization", "")
-        token = auth.replace("Bearer ", "", 1).strip()
-        if token != API_TOKEN:
+        token = bearer_token()
+        if not token:
             return jsonify({"error": "Unauthorized"}), 401
+
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        with db() as con:
+            user = con.execute("""
+                SELECT u.*
+                FROM auth_tokens t
+                JOIN users u ON u.id = t.user_id
+                WHERE t.token_hash=?
+                  AND t.expires_at > ?
+                  AND u.is_active=1
+            """, (token_hash, now_iso())).fetchone()
+
+        if not user:
+            return jsonify({"error": "Unauthorized"}), 401
+
+        g.current_user = user
         return func(*args, **kwargs)
     return wrapper
 
@@ -500,7 +586,48 @@ def ensure_database():
             details TEXT,
             created_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL UNIQUE,
+            full_name TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'Viewer',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            email_verified INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_login TEXT
+        );
+        CREATE TABLE IF NOT EXISTS auth_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_tokens_hash ON auth_tokens(token_hash);
+        CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id);
         """)
+        admin = con.execute("SELECT id FROM users WHERE username=?", (ADMIN_USERNAME,)).fetchone()
+        if not admin and ADMIN_PASSWORD:
+            now = now_iso()
+            con.execute("""
+                INSERT INTO users(username,email,full_name,password_hash,role,is_active,email_verified,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?)
+            """, (
+                ADMIN_USERNAME,
+                os.environ.get("LBA_ADMIN_EMAIL", "admin@lba.local"),
+                "LBA Administrator",
+                generate_password_hash(ADMIN_PASSWORD),
+                "Super Admin",
+                1,
+                1,
+                now,
+                now,
+            ))
+
         count = con.execute("SELECT COUNT(*) FROM players").fetchone()[0]
         has_combined = con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='combined_rankings'").fetchone()
         if count == 0 and has_combined:
