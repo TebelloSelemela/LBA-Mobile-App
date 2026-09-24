@@ -274,7 +274,7 @@ def create_app():
             if not row:
                 return jsonify({"error": "Invalid or expired reset token"}), 400
             now = now_iso()
-            con.execute("UPDATE users SET password_hash=?, updated_at=? WHERE id=?",
+            con.execute("UPDATE users SET password_hash=?, email_verified=1, updated_at=? WHERE id=?",
                         (generate_password_hash(password), now, row["user_id"]))
             con.execute("DELETE FROM email_tokens WHERE token_hash=?", (token_hash,))
             con.execute("DELETE FROM auth_tokens WHERE user_id=?", (row["user_id"],))
