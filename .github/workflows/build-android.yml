@@ -25,12 +25,18 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - name: Install frontend dependencies
         run: npm install
 
       - name: Build web application
         env:
-          VITE_API_BASE: ${{ vars.VITE_API_BASE }}
+          VITE_API_BASE: https://lba-backend-production.up.railway.app/api
         run: npm run build
 
       - name: Create Android project
@@ -49,5 +55,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lba-mobile-debug-apk
-          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          path: frontend/android/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
