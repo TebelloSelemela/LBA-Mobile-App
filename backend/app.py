@@ -642,16 +642,25 @@ def send_email(to_address, subject, body):
             },
             method="POST",
         )
+        print(f"[EMAIL] Resend email attempt: to={to_address!r}, subject={subject!r}", flush=True)
         try:
             with urllib.request.urlopen(req, timeout=20) as response:
+                detail = response.read().decode("utf-8", errors="replace")
+                print(f"[EMAIL] Resend response status: {response.status}", flush=True)
+                print(f"[EMAIL] Resend response body: {detail[:1000]}", flush=True)
                 if response.status < 200 or response.status >= 300:
                     raise RuntimeError(f"Email API returned HTTP {response.status}")
                 return
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            print(f"[EMAIL] Resend HTTP error: status={exc.code}, body={detail[:1000]}", flush=True)
             raise RuntimeError(f"Email API returned HTTP {exc.code}: {detail[:500]}") from exc
         except urllib.error.URLError as exc:
+            print(f"[EMAIL] Resend email exception: {exc.reason!r}", flush=True)
             raise RuntimeError(f"Could not reach email API: {exc.reason}") from exc
+        except Exception as exc:
+            print(f"[EMAIL] Resend email exception: {type(exc).__name__}: {exc}", flush=True)
+            raise
 
     if not SMTP_HOST or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM:
         raise RuntimeError(
