@@ -191,7 +191,13 @@ def create_app():
             rows = con.execute("SELECT * FROM players ORDER BY COALESCE(rank_position,999999), full_name").fetchall()
         output = io.StringIO()
         writer = csv.writer(output)
-        headers = ["id", "rank_position", "full_name", "first_name", "last_name", "gender", "age_group", "event_type", "category_code", "club", "total_points", "tournaments_played", "status", "notes"]
+        # Export every player field so the downloaded register is a complete record.
+        headers = [
+            "id", "source_ranking_id", "full_name", "first_name", "last_name",
+            "gender", "age_group", "event_type", "category_code", "club",
+            "rank_position", "total_points", "tournaments_played", "status",
+            "notes", "created_at", "updated_at"
+        ]
         writer.writerow(headers)
         for row in rows:
             writer.writerow([row[h] for h in headers])
@@ -202,7 +208,13 @@ def create_app():
     def export_players_xlsx():
         with db() as con:
             rows = con.execute("SELECT * FROM players ORDER BY COALESCE(rank_position,999999), full_name").fetchall()
-        headers = ["id","rank_position","full_name","first_name","last_name","gender","age_group","event_type","category_code","club","total_points","tournaments_played","status","notes"]
+        # Keep the Excel register complete: include all fields stored for each player.
+        headers = [
+            "id", "source_ranking_id", "full_name", "first_name", "last_name",
+            "gender", "age_group", "event_type", "category_code", "club",
+            "rank_position", "total_points", "tournaments_played", "status",
+            "notes", "created_at", "updated_at"
+        ]
         wb = Workbook()
         ws = wb.active
         ws.title = "LBA Players"
@@ -215,9 +227,11 @@ def create_app():
             ws.append([row[h] for h in headers])
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
-        widths = [9,12,30,18,18,12,12,20,15,20,14,18,12,42]
-        for i,width in enumerate(widths,1):
-            ws.column_dimensions[chr(64+i)].width = width
+        widths = [9, 16, 30, 18, 20, 12, 12, 20, 15, 22, 14, 14, 18, 12, 42, 22, 22]
+        for i, width in enumerate(widths, 1):
+            # Use column letters beyond Z safely if the export grows in future.
+            from openpyxl.utils import get_column_letter
+            ws.column_dimensions[get_column_letter(i)].width = width
         buf = io.BytesIO()
         wb.save(buf); buf.seek(0)
         return Response(buf.getvalue(), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -631,16 +645,21 @@ def build_draw_pdf(draw):
     story.append(meta_table)
     story.append(Spacer(1, 7 * mm))
 
-    match_rows = [["Match", "Side A", "Side B", "Winner / Score"]]
+    # Present the draw in normal sports language rather than database terminology.
+    # A doubles fixture already contains both players on each side, e.g.
+    # "Player A / Player B vs Player C / Player D".
+    match_rows = [["Match", "Players", "Winner / Score"]]
     for match in draw.get("matches") or []:
+        player_a = str(match.get("side_a") or "-")
+        player_b = str(match.get("side_b") or "-")
+        fixture = f"{player_a}  vs.  {player_b}"
         match_rows.append([
             str(match.get("match_no") or ""),
-            Paragraph(str(match.get("side_a") or "-"), normal),
-            Paragraph(str(match.get("side_b") or "-"), normal),
+            Paragraph(fixture, normal),
             "",
         ])
 
-    table = Table(match_rows, colWidths=[18 * mm, 62 * mm, 62 * mm, 40 * mm], repeatRows=1)
+    table = Table(match_rows, colWidths=[18 * mm, 124 * mm, 40 * mm], repeatRows=1)
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
