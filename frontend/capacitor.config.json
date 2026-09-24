@@ -1,0 +1,8 @@
+{
+  "appId": "ls.org.lba.mobile",
+  "appName": "LBA Mobile App",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}
