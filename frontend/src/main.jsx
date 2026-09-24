@@ -17,7 +17,12 @@ async function saveBlob(blob, filename) {
     const buffer = await blob.arrayBuffer(); let binary = ''; const bytes = new Uint8Array(buffer);
     for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
     const saved = await Filesystem.writeFile({ path: filename, data: btoa(binary), directory: Directory.Cache, recursive: true });
-    try { await Share.share({ title: filename, url: saved.uri, dialogTitle: 'Share LBA file' }); return 'File ready to share.'; } catch { return 'File saved on the device.'; }
+    try {
+      await Share.share({ title: filename, url: saved.uri, dialogTitle: 'Share LBA file' });
+      return 'File ready to share.';
+    } catch {
+      return `File generated: ${filename}`;
+    }
   }
   const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 500); return 'Download started.';
 }
@@ -59,6 +64,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [theme, setTheme] = useState(localStorage.getItem('lba_theme') || 'dark');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [booting, setBooting] = useState(true);
   const [login, setLogin] = useState({ username: 'admin', password: '' });
   const [message, setMessage] = useState('Welcome to the LBA administration system.');
   const [dashboard, setDashboard] = useState(null);
@@ -88,6 +94,7 @@ function App() {
 
   useEffect(() => { loadAll(); }, [token, filters.q, filters.category, filters.status]);
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('lba_theme', theme); }, [theme]);
+  useEffect(() => { const timer = setTimeout(() => setBooting(false), 1050); return () => clearTimeout(timer); }, []);
 
   const categoryOptions = useMemo(() => {
     const values = new Set(['All']);
@@ -204,10 +211,11 @@ function App() {
   }
 
   if (!token) {
-    return <LoginScreen login={login} setLogin={setLogin} doLogin={doLogin} message={message} />;
+    return <><LoginScreen login={login} setLogin={setLogin} doLogin={doLogin} message={message} />{booting && <BootSplash />}</>;
   }
 
   return (
+    <>
     <div className="app-shell">
       <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
         <div className="brand"><img src={logo} alt="Lesotho Badminton Association logo" className="brand-logo" /><div><h1>Badminton Admin</h1><p>Lesotho Badminton Association</p></div><button className="close-menu" onClick={() => setMenuOpen(false)}><X size={20}/></button></div>
@@ -244,6 +252,8 @@ function App() {
       </main>
       <nav className="mobile-nav">{[["home","Home",Home],["records","Players",Users],["draws","Draws",Shuffle],["reports","Reports",Trophy]].map(([id,label,Icon])=><button key={id} className={activeTab===id?"active":""} onClick={()=>setActiveTab(id)}><Icon size={19}/><span>{label}</span></button>)}</nav>
     </div>
+    {booting && <BootSplash />}
+    </>
   );
 }
 
@@ -258,6 +268,15 @@ function Overview({ dashboard, players, draws, setActiveTab, exportFile }) {
       <div className="panel"><div className="section-head"><div><span className="eyebrow">PARTICIPATION</span><h3>Categories</h3></div></div><div className="category-list">{categories.map(c=><div className="category-row" key={c.category_code}><div><b>{c.category_code}</b><small>{c.event_type} · {c.age_group}</small></div><strong>{c.player_count}</strong></div>)}</div>{!categories.length&&<div className="empty">Import player records to see category activity.</div>}</div></section>
     <section className="panel feature-strip"><div><Trophy size={20}/><div><b>Tournament centre</b><span>{draws.length ? `${draws.length} saved draw(s) available.` : 'No draws yet. Create one when players confirm attendance.'}</span></div></div><button className="button" onClick={() => setActiveTab('draws')}>Open draw manager</button></section>
   </section>;
+}
+
+function BootSplash() {
+  return <div className="boot-splash" aria-label="Loading LBA Admin">
+    <div className="boot-logo-wrap"><img src={logo} alt="" className="boot-logo"/><span className="boot-shuttle">🏸</span></div>
+    <div className="boot-title">LBA ADMIN</div>
+    <div className="boot-subtitle">Lesotho Badminton Association</div>
+    <div className="boot-line"><span/></div>
+  </div>;
 }
 
 function LoginScreen({ login, setLogin, doLogin, message }) {
