@@ -191,7 +191,7 @@ function App() {
     try {
       await api('/auth/reset-password', {
         method: 'POST',
-        body: JSON.stringify({ token: resetForm.token.trim(), new_password: resetForm.password })
+        body: JSON.stringify({ token: resetForm.token.trim(), password: resetForm.password })
       });
       setAuthView('login');
       setLogin({ username: '', password: '' });
