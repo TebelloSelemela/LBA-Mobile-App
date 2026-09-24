@@ -13,8 +13,12 @@ A local administration system for Lesotho Badminton Association ranking records 
 
 ## Login
 
-Username: `admin`
-Password: `admin123`
+Set the administrator credentials with environment variables before starting the backend. Do not commit real credentials to GitHub.
+
+```text
+LBA_ADMIN_USERNAME=admin
+LBA_ADMIN_PASSWORD=<your-secure-password>
+```
 
 ## Start backend
 
