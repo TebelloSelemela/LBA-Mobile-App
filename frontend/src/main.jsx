@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users } from 'lucide-react';
+import { Directory, Filesystem } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
+import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users, Home, Menu, X, Sun, Moon, ShieldCheck } from 'lucide-react';
 import './style.css';
 import logo from './assets/lba-logo.png';
 
@@ -8,6 +10,16 @@ const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:5050/api';
 
 function getToken() {
   return localStorage.getItem('lba_token') || '';
+}
+
+async function saveBlob(blob, filename) {
+  if (window.Capacitor?.isNativePlatform?.()) {
+    const buffer = await blob.arrayBuffer(); let binary = ''; const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    const saved = await Filesystem.writeFile({ path: filename, data: btoa(binary), directory: Directory.Cache, recursive: true });
+    try { await Share.share({ title: filename, url: saved.uri, dialogTitle: 'Share LBA file' }); return 'File ready to share.'; } catch { return 'File saved on the device.'; }
+  }
+  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 500); return 'Download started.';
 }
 
 async function api(path, options = {}) {
@@ -44,9 +56,11 @@ function emptyForm() {
 
 function App() {
   const [token, setToken] = useState(getToken());
+  const [activeTab, setActiveTab] = useState('home');
+  const [theme, setTheme] = useState(localStorage.getItem('lba_theme') || 'dark');
+  const [menuOpen, setMenuOpen] = useState(false);
   const [login, setLogin] = useState({ username: 'admin', password: '' });
   const [message, setMessage] = useState('Welcome to the LBA administration system.');
-  const [activeTab, setActiveTab] = useState('records');
   const [dashboard, setDashboard] = useState(null);
   const [players, setPlayers] = useState([]);
   const [draws, setDraws] = useState([]);
@@ -72,7 +86,8 @@ function App() {
     }
   }
 
-  useEffect(() => { loadAll(); }, [token]);
+  useEffect(() => { loadAll(); }, [token, filters.q, filters.category, filters.status]);
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('lba_theme', theme); }, [theme]);
 
   const categoryOptions = useMemo(() => {
     const values = new Set(['All']);
@@ -174,22 +189,14 @@ function App() {
     }
   }
 
-  async function exportCsv() {
+  async function exportFile(path, filename) {
     try {
-      const res = await fetch(`${API_BASE}/players/export.csv`, { headers: { Authorization: `Bearer ${getToken()}` } });
-      if (!res.ok) throw new Error('Export failed.');
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'lba_players.csv';
-      a.click();
-      URL.revokeObjectURL(url);
-      setMessage('CSV export downloaded.');
-    } catch (err) {
-      setMessage(err.message);
-    }
+      const res = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${getToken()}` } });
+      if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data?.error || `Export failed (${res.status}).`); }
+      setMessage(await saveBlob(await res.blob(), filename));
+    } catch (err) { setMessage(err.message); }
   }
+  async function exportCsv() { return exportFile('/players/export.csv', 'lba_players.csv'); }
 
   function logout() {
     localStorage.removeItem('lba_token');
@@ -202,19 +209,23 @@ function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand"><img src={logo} alt="Lesotho Badminton Association logo" className="brand-logo" /><div><h1>Badminton Admin</h1><p>Lesotho records system</p></div></div>
-        <button className={activeTab === 'records' ? 'nav active' : 'nav'} onClick={() => setActiveTab('records')}><Users size={18}/> Records</button>
-        <button className={activeTab === 'draws' ? 'nav active' : 'nav'} onClick={() => setActiveTab('draws')}><Shuffle size={18}/> Draws</button>
-        <button className={activeTab === 'reports' ? 'nav active' : 'nav'} onClick={() => setActiveTab('reports')}><Trophy size={18}/> Reports</button>
-        <button className="logout" onClick={logout}>Logout</button>
+      <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
+        <div className="brand"><img src={logo} alt="Lesotho Badminton Association logo" className="brand-logo" /><div><h1>Badminton Admin</h1><p>Lesotho Badminton Association</p></div><button className="close-menu" onClick={() => setMenuOpen(false)}><X size={20}/></button></div>
+        {[
+          ['home','Overview',Home],['records','Records',Users],['draws','Draws',Shuffle],['reports','Reports',Trophy]
+        ].map(([id,label,Icon]) => <button key={id} className={activeTab === id ? 'nav active' : 'nav'} onClick={() => {setActiveTab(id);setMenuOpen(false);}}><Icon size={18}/><span>{label}</span></button>)}
+        <button className="nav" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}<span>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span></button>
+        <button className="logout" onClick={logout}><Lock size={17}/> Sign out</button>
       </aside>
 
       <main className="main">
-        <header className="hero">
+        <div className="mobile-topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}><Menu size={20}/></button><div><b>LBA ADMIN</b><span>Committee portal</span></div><div className="secure"><ShieldCheck size={16}/> Secure</div></div>
+        {activeTab === "home" && <Overview dashboard={dashboard} players={players} draws={draws} setActiveTab={setActiveTab} exportFile={exportFile}/>} 
+        {activeTab !== "home" && <header className="hero">
           <div className="hero-copy"><div className="hero-brand"><img src={logo} alt="Lesotho Badminton Association logo" className="hero-logo" /><div><p className="eyebrow">Administration purposes</p><h2>Ranking Records & Random Draw Management</h2></div></div><p>Update records, add latest obtained points, select tournament participants and generate draws only for players who are attending.</p></div>
           <div className="hero-actions">
-            <button className="button secondary" onClick={exportCsv}><Download size={16}/> Export CSV</button>
+            <button className="button secondary" onClick={() => exportFile("/players/export.csv","lba_players.csv")}><Download size={16}/> Export CSV</button>
+            <button className="button secondary" onClick={() => exportFile("/players/export.xlsx","lba_players.xlsx")}><FileText size={16}/> Export Excel</button>
             <label className="button"><Upload size={16}/> Import Excel<input type="file" accept=".xlsx,.xls" onChange={importExcel} hidden /></label>
           </div>
         </header>
@@ -228,12 +239,27 @@ function App() {
 
         <div className="message">{message}</div>
 
+        </header>}
         {activeTab === 'records' && <Records players={players} form={form} setForm={setForm} savePlayer={savePlayer} deletePlayer={deletePlayer} filters={filters} setFilters={setFilters} categoryOptions={categoryOptions} loadAll={loadAll} pointInputs={pointInputs} setPointInputs={setPointInputs} addPoints={addPoints} />}
         {activeTab === 'draws' && <Draws draws={draws} drawForm={drawForm} setDrawForm={setDrawForm} generateDraw={generateDraw} categoryOptions={categoryOptions} drawCandidates={drawCandidates} />}
         {activeTab === 'reports' && <Reports />}
       </main>
+      <nav className="mobile-nav">{[["home","Home",Home],["records","Players",Users],["draws","Draws",Shuffle],["reports","Reports",Trophy]].map(([id,label,Icon])=><button key={id} className={activeTab===id?"active":""} onClick={()=>setActiveTab(id)}><Icon size={19}/><span>{label}</span></button>)}</nav>
     </div>
   );
+}
+
+
+function Overview({ dashboard, players, draws, setActiveTab, exportFile }) {
+  const top = dashboard?.topPlayers || [];
+  const categories = dashboard?.categoryBreakdown || [];
+  return <section className="overview-page">
+    <section className="welcome-card"><div><span className="eyebrow">LESOTHO BADMINTON ASSOCIATION</span><h2>Committee dashboard</h2><p>Manage rankings, player records and tournament draws from one professional workspace.</p><div className="quick-actions"><button className="button" onClick={() => setActiveTab('records')}><Plus size={16}/> Add player</button><button className="button secondary" onClick={() => setActiveTab('draws')}><Shuffle size={16}/> Create draw</button><button className="button secondary" onClick={() => exportFile('/players/export.xlsx','lba_players.xlsx')}><FileText size={16}/> Export Excel</button></div></div><div className="court-badge"><span>🏸</span><b>PLAY</b><b>RANK</b><b>GROW</b></div></section>
+    <section className="stats"><Stat label="Registered players" value={dashboard?.totalPlayers ?? 0}/><Stat label="Active players" value={dashboard?.activePlayers ?? 0}/><Stat label="Categories" value={dashboard?.categories ?? 0}/><Stat label="Saved draws" value={dashboard?.draws ?? 0}/></section>
+    <section className="dashboard-grid"><div className="panel"><div className="section-head"><div><span className="eyebrow">RANKING SNAPSHOT</span><h3>Leading players</h3></div><button className="text-btn" onClick={() => setActiveTab('records')}>View register</button></div><div className="ranking-list">{top.map((p,i)=><div className="rank-row" key={p.id}><strong className={`rank-no rank-${i+1}`}>{i+1}</strong><div className="avatar">{p.full_name.split(' ').map(x=>x[0]).slice(0,2).join('')}</div><div className="rank-name"><b>{p.full_name}</b><small>{p.category_code} · {p.club || 'Independent'}</small></div><strong>{p.total_points}<small>points</small></strong></div>)}{!top.length&&<div className="empty">No ranking records yet.</div>}</div></div>
+      <div className="panel"><div className="section-head"><div><span className="eyebrow">PARTICIPATION</span><h3>Categories</h3></div></div><div className="category-list">{categories.map(c=><div className="category-row" key={c.category_code}><div><b>{c.category_code}</b><small>{c.event_type} · {c.age_group}</small></div><strong>{c.player_count}</strong></div>)}</div>{!categories.length&&<div className="empty">Import player records to see category activity.</div>}</div></section>
+    <section className="panel feature-strip"><div><Trophy size={20}/><div><b>Tournament centre</b><span>{draws.length ? `${draws.length} saved draw(s) available.` : 'No draws yet. Create one when players confirm attendance.'}</span></div></div><button className="button" onClick={() => setActiveTab('draws')}>Open draw manager</button></section>
+  </section>;
 }
 
 function LoginScreen({ login, setLogin, doLogin, message }) {
@@ -294,14 +320,8 @@ function DrawMatches({ draw }) {
         throw new Error(err);
       }
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const safeTitle = (currentDraw.title || 'lba_draw').replace(/[^a-z0-9_-]+/gi, '_');
-      a.href = url;
-      a.download = `${safeTitle}_${currentDraw.id}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-      setPdfMessage('PDF draw sheet downloaded.');
+      const safeTitle = (currentDraw.title || "lba_draw").replace(/[^a-z0-9_-]+/gi, "_");
+      setPdfMessage(await saveBlob(blob, `${safeTitle}_${currentDraw.id}.pdf`));
     } catch (err) {
       setPdfMessage(err.message);
     }
