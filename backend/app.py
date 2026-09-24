@@ -65,6 +65,8 @@ def create_app():
 
             if not user or not user["is_active"] or not check_password_hash(user["password_hash"], password):
                 return jsonify({"error": "Invalid username/email or password"}), 401
+            if not user["email_verified"]:
+                return jsonify({"error": "Please verify your email address before signing in."}), 403
 
             token = secrets.token_urlsafe(48)
             token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
