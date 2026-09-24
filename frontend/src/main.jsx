@@ -38,7 +38,7 @@ async function api(path, options = {}) {
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  if (!res.ok) throw new Error(data?.error || data || `Request failed: ${res.status}`);
+  if (!res.ok) { const error = new Error(data?.error || data || `Request failed: ${res.status}`); error.status = res.status; throw error; }
   return data;
 }
 
@@ -61,6 +61,7 @@ function emptyForm() {
 
 function App() {
   const [token, setToken] = useState(getToken());
+  const [currentUser, setCurrentUser] = useState(() => { try { return JSON.parse(localStorage.getItem('lba_user') || 'null'); } catch { return null; } });
   const [activeTab, setActiveTab] = useState('home');
   const [theme, setTheme] = useState(localStorage.getItem('lba_theme') || 'dark');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -88,7 +89,7 @@ function App() {
       setPlayers(playerData);
       setDraws(drawData);
     } catch (err) {
-      setMessage(err.message);
+      if (err.status === 401) { localStorage.removeItem('lba_token'); localStorage.removeItem('lba_user'); setToken(''); setCurrentUser(null); setMessage('Your session has expired. Please sign in again.'); } else setMessage(err.message);
     }
   }
 
@@ -114,8 +115,10 @@ function App() {
     try {
       const data = await api('/auth/login', { method: 'POST', body: JSON.stringify(login) });
       localStorage.setItem('lba_token', data.token);
+      localStorage.setItem('lba_user', JSON.stringify(data.user));
       setToken(data.token);
-      setMessage('Login successful.');
+      setCurrentUser(data.user);
+      setMessage(`Welcome, ${data.user.full_name}.`);
     } catch (err) {
       setMessage(err.message || 'Failed to login.');
     }
@@ -227,7 +230,7 @@ function App() {
       </aside>
 
       <main className="main">
-        <div className="mobile-topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}><Menu size={20}/></button><div><b>LBA ADMIN</b><span>Committee portal</span></div><div className="secure"><ShieldCheck size={16}/> Secure</div></div>
+        <div className="mobile-topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}><Menu size={20}/></button><div><b>LBA ADMIN</b><span>{currentUser?.full_name || "Committee portal"} · {currentUser?.role || "User"}</span></div><div className="secure"><ShieldCheck size={16}/> Secure</div></div>
         {activeTab === "home" && <Overview dashboard={dashboard} players={players} draws={draws} setActiveTab={setActiveTab} exportFile={exportFile}/>} 
         {activeTab !== "home" && <header className="hero">
           <div className="hero-copy"><div className="hero-brand"><img src={logo} alt="Lesotho Badminton Association logo" className="hero-logo" /><div><p className="eyebrow">Administration purposes</p><h2>Ranking Records & Random Draw Management</h2></div></div><p>Update records, add latest obtained points, select tournament participants and generate draws only for players who are attending.</p></div>
@@ -280,7 +283,7 @@ function BootSplash() {
 }
 
 function LoginScreen({ login, setLogin, doLogin, message }) {
-  return <div className="login-page"><form className="login-card" onSubmit={doLogin}><img src={logo} alt="Lesotho Badminton Association logo" className="login-logo" /><div className="lock"><Lock /></div><h1>LBA Admin Login</h1><p>Use your local admin credentials to access ranking records.</p><input placeholder="Username" value={login.username} onChange={e => setLogin({ ...login, username: e.target.value })}/><input placeholder="Password" type="password" value={login.password} onChange={e => setLogin({ ...login, password: e.target.value })}/><button className="button full">Login</button><small>{message}</small></form></div>;
+  return <div className="login-page"><form className="login-card" onSubmit={doLogin}><img src={logo} alt="Lesotho Badminton Association logo" className="login-logo" /><div className="lock"><Lock /></div><h1>LBA Admin Login</h1><p>Use your local admin credentials to access ranking records.</p><input placeholder="Username or email" value={login.username} onChange={e => setLogin({ ...login, username: e.target.value })}/><input placeholder="Password" type="password" value={login.password} onChange={e => setLogin({ ...login, password: e.target.value })}/><button className="button full">Login</button><small>{message}</small></form></div>;
 }
 
 function Records({ players, form, setForm, savePlayer, deletePlayer, filters, setFilters, categoryOptions, loadAll, pointInputs, setPointInputs, addPoints }) {
