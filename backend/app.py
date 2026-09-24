@@ -619,6 +619,7 @@ def send_email(to_address, subject, body):
             headers={
                 "Authorization": f"Bearer {RESEND_API_KEY}",
                 "Content-Type": "application/json",
+                "User-Agent": "LBA-Mobile-App/1.0",
             },
             method="POST",
         )
