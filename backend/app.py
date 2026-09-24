@@ -21,7 +21,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DB = BASE_DIR.parent / "database" / "lba_rankings.db"
 DB_PATH = Path(os.environ.get("LBA_DB_PATH", DEFAULT_DB))
 ADMIN_USERNAME = os.environ.get("LBA_ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.environ.get("LBA_ADMIN_PASSWORD", "Les@Bad2026")
+ADMIN_PASSWORD = os.environ.get("LBA_ADMIN_PASSWORD")
+if not ADMIN_PASSWORD:
+    raise RuntimeError("LBA_ADMIN_PASSWORD must be set in the environment before starting the backend.")
 API_TOKEN = os.environ.get("LBA_API_TOKEN", secrets.token_urlsafe(32))
 
 
