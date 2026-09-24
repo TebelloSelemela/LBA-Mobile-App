@@ -1,4 +1,5 @@
 name: Build LBA Android APK
+# Authentication flow release build
 
 on:
   workflow_dispatch:
