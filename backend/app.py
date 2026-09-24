@@ -1,0 +1,645 @@
+import csv
+import io
+import os
+import secrets
+import sqlite3
+import re
+from datetime import datetime
+from pathlib import Path
+from functools import wraps
+
+from flask import Flask, jsonify, request, Response
+from flask_cors import CORS
+from openpyxl import load_workbook
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_DB = BASE_DIR.parent / "database" / "lba_rankings.db"
+DB_PATH = Path(os.environ.get("LBA_DB_PATH", DEFAULT_DB))
+ADMIN_USERNAME = os.environ.get("LBA_ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.environ.get("LBA_ADMIN_PASSWORD", "Les@Bad2026")
+API_TOKEN = os.environ.get("LBA_API_TOKEN", secrets.token_urlsafe(32))
+
+
+def create_app():
+    app = Flask(__name__)
+    CORS(app)
+    ensure_database()
+
+    @app.route("/api/health")
+    def health():
+        return jsonify({"ok": True, "database": str(DB_PATH), "time": datetime.utcnow().isoformat() + "Z"})
+
+    @app.route("/api/auth/login", methods=["POST"])
+    def login():
+        data = request.get_json(silent=True) or {}
+        if data.get("username") == ADMIN_USERNAME and data.get("password") == ADMIN_PASSWORD:
+            return jsonify({"token": API_TOKEN, "username": ADMIN_USERNAME})
+        return jsonify({"error": "Invalid username or password"}), 401
+
+    @app.route("/api/dashboard")
+    @require_auth
+    def dashboard():
+        with db() as con:
+            total = con.execute("SELECT COUNT(*) FROM players").fetchone()[0]
+            active = con.execute("SELECT COUNT(*) FROM players WHERE status='Active'").fetchone()[0]
+            categories = con.execute("SELECT COUNT(DISTINCT category_code) FROM players WHERE category_code IS NOT NULL AND category_code!=''").fetchone()[0]
+            top = con.execute("SELECT full_name, rank_position, total_points FROM players ORDER BY COALESCE(rank_position, 999999), full_name LIMIT 1").fetchone()
+            draws = con.execute("SELECT COUNT(*) FROM draws").fetchone()[0]
+        return jsonify({
+            "totalPlayers": total,
+            "activePlayers": active,
+            "categories": categories,
+            "draws": draws,
+            "topPlayer": dict(top) if top else None,
+        })
+
+    @app.route("/api/categories")
+    @require_auth
+    def categories():
+        with db() as con:
+            rows = con.execute("""
+                SELECT category_code, event_type, gender, age_group, COUNT(*) AS player_count
+                FROM players
+                GROUP BY category_code, event_type, gender, age_group
+                ORDER BY event_type, age_group
+            """).fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.route("/api/players", methods=["GET"])
+    @require_auth
+    def list_players():
+        category = request.args.get("category", "").strip()
+        q = request.args.get("q", "").strip()
+        status = request.args.get("status", "").strip()
+        sql = "SELECT * FROM players WHERE 1=1"
+        args = []
+        if category and category != "All":
+            sql += " AND category_code = ?"
+            args.append(category)
+        if status and status != "All":
+            sql += " AND status = ?"
+            args.append(status)
+        if q:
+            like = f"%{q}%"
+            sql += " AND (full_name LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR club LIKE ? OR category_code LIKE ?)"
+            args.extend([like, like, like, like, like])
+        sql += " ORDER BY COALESCE(rank_position, 999999), full_name"
+        with db() as con:
+            rows = con.execute(sql, args).fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.route("/api/players", methods=["POST"])
+    @require_auth
+    def create_player():
+        payload = clean_player_payload(request.get_json(silent=True) or {})
+        with db() as con:
+            cur = con.execute("""
+                INSERT INTO players(category_code,event_type,gender,age_group,club,rank_position,first_name,last_name,full_name,total_points,tournaments_played,status,notes,created_at,updated_at)
+                VALUES(:category_code,:event_type,:gender,:age_group,:club,:rank_position,:first_name,:last_name,:full_name,:total_points,:tournaments_played,:status,:notes,:created_at,:updated_at)
+            """, payload)
+            con.commit()
+            player = con.execute("SELECT * FROM players WHERE id=?", (cur.lastrowid,)).fetchone()
+        return jsonify(dict(player)), 201
+
+    @app.route("/api/players/<int:player_id>", methods=["PUT"])
+    @require_auth
+    def update_player(player_id):
+        payload = clean_player_payload(request.get_json(silent=True) or {}, updating=True)
+        payload["id"] = player_id
+        with db() as con:
+            found = con.execute("SELECT id FROM players WHERE id=?", (player_id,)).fetchone()
+            if not found:
+                return jsonify({"error": "Player not found"}), 404
+            con.execute("""
+                UPDATE players SET
+                    category_code=:category_code,event_type=:event_type,gender=:gender,age_group=:age_group,
+                    club=:club,rank_position=:rank_position,first_name=:first_name,last_name=:last_name,
+                    full_name=:full_name,total_points=:total_points,tournaments_played=:tournaments_played,
+                    status=:status,notes=:notes,updated_at=:updated_at
+                WHERE id=:id
+            """, payload)
+            con.commit()
+            player = con.execute("SELECT * FROM players WHERE id=?", (player_id,)).fetchone()
+        return jsonify(dict(player))
+
+
+    @app.route("/api/players/<int:player_id>/points", methods=["POST"])
+    @require_auth
+    def add_player_points(player_id):
+        data = request.get_json(silent=True) or {}
+        delta = nullable_float(data.get("points_delta"))
+        if delta is None:
+            return jsonify({"error": "points_delta is required"}), 400
+        note = (data.get("notes") or "Latest tournament points added").strip()
+        increment_tournament = bool(data.get("increment_tournament", True))
+        with db() as con:
+            player = con.execute("SELECT * FROM players WHERE id=?", (player_id,)).fetchone()
+            if not player:
+                return jsonify({"error": "Player not found"}), 404
+            old_points = float(player["total_points"] or 0)
+            new_points = old_points + float(delta)
+            tournaments_played = int(player["tournaments_played"] or 0) + (1 if increment_tournament else 0)
+            now = now_iso()
+            con.execute("""
+                UPDATE players
+                SET total_points=?, tournaments_played=?, updated_at=?
+                WHERE id=?
+            """, (new_points, tournaments_played, now, player_id))
+            con.execute("""
+                INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at)
+                VALUES(?,?,?,?,?,?)
+            """, (ADMIN_USERNAME, "ADD_POINTS", "players", player_id,
+                  f"{player['full_name']}: {old_points} + {delta} = {new_points}. {note}", now))
+            con.commit()
+            updated = con.execute("SELECT * FROM players WHERE id=?", (player_id,)).fetchone()
+        return jsonify({"player": dict(updated), "old_points": old_points, "added_points": delta, "new_points": new_points})
+
+    @app.route("/api/players/<int:player_id>", methods=["DELETE"])
+    @require_auth
+    def delete_player(player_id):
+        with db() as con:
+            player = con.execute("SELECT * FROM players WHERE id=?", (player_id,)).fetchone()
+            if not player:
+                return jsonify({"error": "Player not found"}), 404
+            con.execute("DELETE FROM players WHERE id=?", (player_id,))
+            con.commit()
+        return jsonify({"deleted": True, "player": dict(player)})
+
+    @app.route("/api/players/export.csv")
+    @require_auth
+    def export_players_csv():
+        with db() as con:
+            rows = con.execute("SELECT * FROM players ORDER BY COALESCE(rank_position,999999), full_name").fetchall()
+        output = io.StringIO()
+        writer = csv.writer(output)
+        headers = ["id", "rank_position", "full_name", "first_name", "last_name", "gender", "age_group", "event_type", "category_code", "club", "total_points", "tournaments_played", "status", "notes"]
+        writer.writerow(headers)
+        for row in rows:
+            writer.writerow([row[h] for h in headers])
+        return Response(output.getvalue(), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=lba_players.csv"})
+
+    @app.route("/api/import/excel", methods=["POST"])
+    @require_auth
+    def import_excel():
+        if "file" not in request.files:
+            return jsonify({"error": "Upload an Excel file using field name 'file'"}), 400
+        file = request.files["file"]
+        imported = import_workbook(file)
+        return jsonify({"imported": imported})
+
+    @app.route("/api/draws/random", methods=["POST"])
+    @require_auth
+    def random_draw():
+        data = request.get_json(silent=True) or {}
+        title = (data.get("title") or "Random Draw").strip()
+        category = (data.get("category_code") or "All").strip()
+        draw_type = (data.get("draw_type") or "Singles").strip()
+        seed_by_rank = bool(data.get("seed_by_rank", False))
+        selected_ids = data.get("player_ids") or []
+        selected_ids = [nullable_int(pid) for pid in selected_ids]
+        selected_ids = [pid for pid in selected_ids if pid is not None]
+
+        with db() as con:
+            if selected_ids:
+                placeholders = ",".join("?" for _ in selected_ids)
+                sql = f"SELECT * FROM players WHERE status='Active' AND id IN ({placeholders})"
+                players = [dict(row) for row in con.execute(sql, selected_ids).fetchall()]
+                # Preserve the admin's selected order before shuffling/seeding.
+                order = {pid: index for index, pid in enumerate(selected_ids)}
+                players.sort(key=lambda row: order.get(row["id"], 999999))
+            else:
+                args = []
+                sql = "SELECT * FROM players WHERE status='Active'"
+                if category and category != "All":
+                    sql += " AND category_code=?"
+                    args.append(category)
+                players = [dict(row) for row in con.execute(sql, args).fetchall()]
+
+            if len(players) == 0:
+                return jsonify({"error": "No active selected players found for this draw"}), 400
+
+            if seed_by_rank:
+                players.sort(key=lambda x: (x.get("rank_position") is None, x.get("rank_position") or 999999))
+            else:
+                import random
+                random.shuffle(players)
+
+            fixtures = build_fixtures(players, draw_type)
+            now = now_iso()
+            cur = con.execute(
+                "INSERT INTO draws(title,category_code,draw_type,created_at) VALUES(?,?,?,?)",
+                (title, category, draw_type, now),
+            )
+            draw_id = cur.lastrowid
+            for fixture in fixtures:
+                con.execute("""
+                    INSERT INTO draw_matches(draw_id,match_no,side_a,side_b,side_a_player_ids,side_b_player_ids,status)
+                    VALUES(?,?,?,?,?,?,?)
+                """, (draw_id, fixture["match_no"], fixture["side_a"], fixture["side_b"], fixture["side_a_player_ids"], fixture["side_b_player_ids"], "Pending"))
+            con.execute("""
+                INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at)
+                VALUES(?,?,?,?,?,?)
+            """, (ADMIN_USERNAME, "GENERATE_DRAW", "draws", draw_id,
+                  f"{title}: {len(players)} selected participant(s), {len(fixtures)} match(es)", now))
+            con.commit()
+            draw = get_draw(con, draw_id)
+            draw["selected_player_count"] = len(players)
+        return jsonify(draw), 201
+
+    @app.route("/api/draws")
+    @require_auth
+    def list_draws():
+        with db() as con:
+            rows = con.execute("SELECT * FROM draws ORDER BY id DESC").fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.route("/api/draws/<int:draw_id>")
+    @require_auth
+    def read_draw(draw_id):
+        with db() as con:
+            draw = get_draw(con, draw_id)
+            if not draw:
+                return jsonify({"error": "Draw not found"}), 404
+        return jsonify(draw)
+
+    @app.route("/api/draws/<int:draw_id>/export.pdf")
+    @require_auth
+    def export_draw_pdf(draw_id):
+        with db() as con:
+            draw = get_draw(con, draw_id)
+            if not draw:
+                return jsonify({"error": "Draw not found"}), 404
+
+        pdf_bytes = build_draw_pdf(draw)
+        filename = safe_filename(f"{draw['title'] or 'lba_draw'}_{draw['id']}.pdf")
+        return Response(
+            pdf_bytes,
+            mimetype="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+
+    @app.route("/api/draws/<int:draw_id>", methods=["DELETE"])
+    @require_auth
+    def delete_draw(draw_id):
+        with db() as con:
+            con.execute("DELETE FROM draw_matches WHERE draw_id=?", (draw_id,))
+            con.execute("DELETE FROM draws WHERE id=?", (draw_id,))
+            con.commit()
+        return jsonify({"deleted": True})
+
+    return app
+
+
+def require_auth(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        auth = request.headers.get("Authorization", "")
+        token = auth.replace("Bearer ", "", 1).strip()
+        if token != API_TOKEN:
+            return jsonify({"error": "Unauthorized"}), 401
+        return func(*args, **kwargs)
+    return wrapper
+
+
+def db():
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    return con
+
+
+def now_iso():
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def ensure_database():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with db() as con:
+        con.executescript("""
+        CREATE TABLE IF NOT EXISTS players (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_ranking_id INTEGER,
+            category_code TEXT,
+            event_type TEXT,
+            gender TEXT,
+            age_group TEXT,
+            club TEXT,
+            rank_position INTEGER,
+            first_name TEXT,
+            last_name TEXT,
+            full_name TEXT NOT NULL,
+            total_points REAL DEFAULT 0,
+            tournaments_played INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'Active',
+            notes TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS draws (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            category_code TEXT,
+            draw_type TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS draw_matches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            draw_id INTEGER NOT NULL,
+            match_no INTEGER NOT NULL,
+            side_a TEXT NOT NULL,
+            side_b TEXT NOT NULL,
+            side_a_player_ids TEXT,
+            side_b_player_ids TEXT,
+            winner TEXT,
+            status TEXT DEFAULT 'Pending',
+            FOREIGN KEY(draw_id) REFERENCES draws(id)
+        );
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor TEXT,
+            action TEXT,
+            entity TEXT,
+            entity_id INTEGER,
+            details TEXT,
+            created_at TEXT
+        );
+        """)
+        count = con.execute("SELECT COUNT(*) FROM players").fetchone()[0]
+        has_combined = con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='combined_rankings'").fetchone()
+        if count == 0 and has_combined:
+            now = now_iso()
+            con.execute("""
+                INSERT INTO players(source_ranking_id,category_code,event_type,gender,age_group,club,rank_position,first_name,last_name,full_name,total_points,tournaments_played,status,created_at,updated_at)
+                SELECT id, category_code, event_type, gender, age_group, COALESCE(club,''), rank_position, first_name, last_name, full_name,
+                       COALESCE(total_points,0), COALESCE(tournaments_played,0), 'Active', ?, ?
+                FROM combined_rankings
+            """, (now, now))
+        con.commit()
+
+
+def clean_player_payload(data, updating=False):
+    full_name = (data.get("full_name") or data.get("name") or "").strip()
+    first_name = (data.get("first_name") or "").strip()
+    last_name = (data.get("last_name") or "").strip()
+    if not full_name:
+        full_name = f"{first_name} {last_name}".strip()
+    if not full_name:
+        raise ValueError("full_name is required")
+    if not first_name and full_name:
+        parts = full_name.split()
+        first_name = parts[0]
+        last_name = " ".join(parts[1:]) if len(parts) > 1 else last_name
+    category_code = (data.get("category_code") or data.get("category") or "Uncategorised").strip()
+    event_type = (data.get("event_type") or infer_event_type(category_code)).strip()
+    gender = (data.get("gender") or infer_gender(category_code)).strip()
+    age_group = (data.get("age_group") or infer_age_group(category_code)).strip()
+    now = now_iso()
+    return {
+        "category_code": category_code,
+        "event_type": event_type,
+        "gender": gender,
+        "age_group": age_group,
+        "club": (data.get("club") or "").strip(),
+        "rank_position": nullable_int(data.get("rank_position", data.get("rank"))),
+        "first_name": first_name,
+        "last_name": last_name,
+        "full_name": full_name,
+        "total_points": nullable_float(data.get("total_points", data.get("points"))) or 0,
+        "tournaments_played": nullable_int(data.get("tournaments_played")) or 0,
+        "status": data.get("status") or "Active",
+        "notes": data.get("notes") or "",
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def nullable_int(value):
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except (ValueError, TypeError):
+        return None
+
+
+def nullable_float(value):
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def infer_gender(category):
+    text = (category or "").upper()
+    if text.startswith("WS") or "WOM" in text:
+        return "Women"
+    if text.startswith("MS") or "MEN" in text:
+        return "Men"
+    return "Open"
+
+
+def infer_event_type(category):
+    text = (category or "").upper()
+    if text.startswith("WS"):
+        return "Women's Singles"
+    if text.startswith("MS"):
+        return "Men's Singles"
+    if "XD" in text or "MIX" in text:
+        return "Mixed Doubles"
+    if "D" in text:
+        return "Doubles"
+    return "Singles"
+
+
+def infer_age_group(category):
+    text = (category or "").upper().replace(" ", "")
+    for age in ["U11", "U13", "U15", "U17", "U19", "18+"]:
+        if age in text:
+            return age
+    return "Open"
+
+
+def build_fixtures(players, draw_type):
+    fixtures = []
+    if draw_type.lower() == "doubles":
+        pairs = []
+        for i in range(0, len(players), 2):
+            a = players[i]
+            b = players[i + 1] if i + 1 < len(players) else None
+            name = f"{a['full_name']} / {b['full_name']}" if b else f"{a['full_name']} / Waiting partner"
+            ids = f"{a['id']},{b['id']}" if b else f"{a['id']}"
+            pairs.append({"name": name, "ids": ids})
+        for i in range(0, len(pairs), 2):
+            a = pairs[i]
+            b = pairs[i + 1] if i + 1 < len(pairs) else {"name": "Bye", "ids": ""}
+            fixtures.append({"match_no": len(fixtures) + 1, "side_a": a["name"], "side_b": b["name"], "side_a_player_ids": a["ids"], "side_b_player_ids": b["ids"]})
+        return fixtures
+
+    for i in range(0, len(players), 2):
+        a = players[i]
+        b = players[i + 1] if i + 1 < len(players) else {"full_name": "Bye", "id": ""}
+        fixtures.append({"match_no": len(fixtures) + 1, "side_a": a["full_name"], "side_b": b["full_name"], "side_a_player_ids": str(a["id"]), "side_b_player_ids": str(b["id"])})
+    return fixtures
+
+
+def get_draw(con, draw_id):
+    row = con.execute("SELECT * FROM draws WHERE id=?", (draw_id,)).fetchone()
+    if not row:
+        return None
+    matches = con.execute("SELECT * FROM draw_matches WHERE draw_id=? ORDER BY match_no", (draw_id,)).fetchall()
+    data = dict(row)
+    data["matches"] = [dict(match) for match in matches]
+    return data
+
+
+def safe_filename(name):
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_")
+    return cleaned or "lba_draw.pdf"
+
+
+def build_draw_pdf(draw):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=16 * mm,
+        leftMargin=16 * mm,
+        topMargin=15 * mm,
+        bottomMargin=15 * mm,
+        title=draw.get("title") or "LBA Draw",
+    )
+    styles = getSampleStyleSheet()
+    story = []
+
+    title_style = styles["Title"]
+    title_style.fontName = "Helvetica-Bold"
+    title_style.fontSize = 18
+    title_style.leading = 22
+    title_style.textColor = colors.HexColor("#0f172a")
+
+    normal = styles["BodyText"]
+    normal.fontName = "Helvetica"
+    normal.fontSize = 9
+    normal.leading = 12
+
+    small = styles["BodyText"]
+    small.fontName = "Helvetica"
+    small.fontSize = 8
+    small.leading = 10
+    small.textColor = colors.HexColor("#475569")
+
+    heading_style = styles["Heading2"]
+    heading_style.textColor = colors.HexColor("#047857")
+    heading_style.spaceAfter = 4
+
+    if LOGO_PATH.exists():
+        story.append(Image(str(LOGO_PATH), width=26 * mm, height=26 * mm))
+        story.append(Spacer(1, 3 * mm))
+
+    story.append(Paragraph("Lesotho Badminton Association", title_style))
+    story.append(Paragraph("Official Tournament Draw Sheet", heading_style))
+    story.append(Spacer(1, 5 * mm))
+
+    meta = [
+        ["Draw title", draw.get("title") or "-", "Draw type", draw.get("draw_type") or "-"],
+        ["Category", draw.get("category_code") or "All", "Created", draw.get("created_at") or "-"],
+        ["Draw ID", str(draw.get("id") or "-"), "Matches", str(len(draw.get("matches") or []))],
+    ]
+    meta_table = Table(meta, colWidths=[25 * mm, 65 * mm, 25 * mm, 65 * mm])
+    meta_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+        ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#cbd5e1")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(meta_table)
+    story.append(Spacer(1, 7 * mm))
+
+    match_rows = [["Match", "Side A", "Side B", "Winner / Score"]]
+    for match in draw.get("matches") or []:
+        match_rows.append([
+            str(match.get("match_no") or ""),
+            Paragraph(str(match.get("side_a") or "-"), normal),
+            Paragraph(str(match.get("side_b") or "-"), normal),
+            "",
+        ])
+
+    table = Table(match_rows, colWidths=[18 * mm, 62 * mm, 62 * mm, 40 * mm], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("ALIGN", (0, 0), (0, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#cbd5e1")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 8 * mm))
+    story.append(Paragraph("Prepared by LBA Admin System. Keep this file as the official draw record for the tournament.", small))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def import_workbook(file_storage):
+    wb = load_workbook(file_storage, data_only=True)
+    imported = 0
+    now = now_iso()
+    with db() as con:
+        for sheet in wb.worksheets:
+            rows = list(sheet.iter_rows(values_only=True))
+            if not rows:
+                continue
+            headers = [str(cell).strip().lower().replace(" ", "_") if cell is not None else "" for cell in rows[0]]
+            for values in rows[1:]:
+                record = dict(zip(headers, values))
+                full_name = str(record.get("full_name") or record.get("name") or "").strip()
+                if not full_name:
+                    first = str(record.get("first_name") or record.get("firstname") or "").strip()
+                    last = str(record.get("last_name") or record.get("lastname") or "").strip()
+                    full_name = f"{first} {last}".strip()
+                if not full_name:
+                    continue
+                category = str(record.get("category_code") or record.get("category") or sheet.title).strip()
+                payload = clean_player_payload({
+                    "full_name": full_name,
+                    "category_code": category,
+                    "gender": record.get("gender"),
+                    "age_group": record.get("age_group"),
+                    "club": record.get("club"),
+                    "rank_position": record.get("rank_position") or record.get("rank"),
+                    "total_points": record.get("total_points") or record.get("points"),
+                    "tournaments_played": record.get("tournaments_played"),
+                    "status": "Active",
+                    "notes": f"Imported from {sheet.title}",
+                })
+                con.execute("""
+                    INSERT INTO players(category_code,event_type,gender,age_group,club,rank_position,first_name,last_name,full_name,total_points,tournaments_played,status,notes,created_at,updated_at)
+                    VALUES(:category_code,:event_type,:gender,:age_group,:club,:rank_position,:first_name,:last_name,:full_name,:total_points,:tournaments_played,:status,:notes,:created_at,:updated_at)
+                """, payload)
+                imported += 1
+        con.commit()
+    return imported
+
+
+app = create_app()
+
+if __name__ == "__main__":
+    app.run(debug=True, host="127.0.0.1", port=5050)
