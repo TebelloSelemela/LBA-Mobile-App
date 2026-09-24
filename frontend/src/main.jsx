@@ -167,6 +167,26 @@ function App() {
     }
   }
 
+  async function resendVerification() {
+    const identifier = (login.username || '').trim();
+    if (!identifier) {
+      setAuthView('login');
+      setMessage('Enter your username or email on the login screen first.');
+      return;
+    }
+    try {
+      const data = await api('/auth/resend-verification', {
+        method: 'POST',
+        body: JSON.stringify({ email: identifier, username: identifier })
+      });
+      setAuthView('verify');
+      setVerifyToken('');
+      setMessage(data?.message || 'A new verification token has been sent to your email.');
+    } catch (err) {
+      setMessage(err.message || 'Could not resend the verification email.');
+    }
+  }
+
   async function doForgotPassword(e) {
     e.preventDefault();
     try {
@@ -309,6 +329,7 @@ function App() {
         verifyToken={verifyToken}
         setVerifyToken={setVerifyToken}
         doVerifyEmail={doVerifyEmail}
+        resendVerification={resendVerification}
         forgotEmail={forgotEmail}
         setForgotEmail={setForgotEmail}
         doForgotPassword={doForgotPassword}
@@ -389,7 +410,7 @@ function BootSplash() {
 function AuthScreen({
   view, setView, login, setLogin, doLogin,
   registerForm, setRegisterForm, doRegister,
-  verifyToken, setVerifyToken, doVerifyEmail,
+  verifyToken, setVerifyToken, doVerifyEmail, resendVerification,
   forgotEmail, setForgotEmail, doForgotPassword,
   resetForm, setResetForm, doResetPassword, message
 }) {
@@ -444,7 +465,7 @@ function AuthScreen({
       {view === 'verify' && <>
         <input placeholder="Verification token" value={verifyToken} onChange={e => setVerifyToken(e.target.value)} autoComplete="one-time-code"/>
         <button className="button full">Verify email</button>
-        <div className="auth-links"><button type="button" onClick={() => setView('login')}>Back to login</button><button type="button" onClick={() => setView('register')}>Register again</button></div>
+        <div className="auth-links"><button type="button" onClick={() => setView('login')}>Back to login</button><button type="button" onClick={resendVerification}>Resend token</button></div>
       </>}
 
       {view === 'forgot' && <>
