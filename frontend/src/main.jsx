@@ -237,7 +237,7 @@ function App() {
 }
 
 function LoginScreen({ login, setLogin, doLogin, message }) {
-  return <div className="login-page"><form className="login-card" onSubmit={doLogin}><img src={logo} alt="Lesotho Badminton Association logo" className="login-logo" /><div className="lock"><Lock /></div><h1>LBA Admin Login</h1><p>Use your local admin credentials to access ranking records.</p><input placeholder="Username" value={login.username} onChange={e => setLogin({ ...login, username: e.target.value })}/><input placeholder="Password" type="password" value={login.password} onChange={e => setLogin({ ...login, password: e.target.value })}/><button className="button full">Login</button><small>{message}</small><small>Default for local testing: admin / Les@Bad2026</small></form></div>;
+  return <div className="login-page"><form className="login-card" onSubmit={doLogin}><img src={logo} alt="Lesotho Badminton Association logo" className="login-logo" /><div className="lock"><Lock /></div><h1>LBA Admin Login</h1><p>Use your local admin credentials to access ranking records.</p><input placeholder="Username" value={login.username} onChange={e => setLogin({ ...login, username: e.target.value })}/><input placeholder="Password" type="password" value={login.password} onChange={e => setLogin({ ...login, password: e.target.value })}/><button className="button full">Login</button><small>{message}</small></form></div>;
 }
 
 function Records({ players, form, setForm, savePlayer, deletePlayer, filters, setFilters, categoryOptions, loadAll, pointInputs, setPointInputs, addPoints }) {
