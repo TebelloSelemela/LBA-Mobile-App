@@ -144,6 +144,65 @@ def create_app():
         return jsonify({"message": "Registration successful. Check your email to verify your account."}), 201
 
 
+    @app.route("/api/auth/resend-verification", methods=["POST"])
+    def resend_verification():
+        data = request.get_json(silent=True) or {}
+        identifier = (data.get("email") or data.get("username") or "").strip().lower()
+        if not identifier:
+            return jsonify({"error": "Username or email is required"}), 400
+
+        with db() as con:
+            user = con.execute("""
+                SELECT * FROM users
+                WHERE LOWER(username)=LOWER(?) OR LOWER(email)=LOWER(?)
+                LIMIT 1
+            """, (identifier, identifier)).fetchone()
+
+            if not user:
+                return jsonify({"error": "If that account exists and is not verified, a new verification token has been sent."})
+
+            if user["email_verified"]:
+                return jsonify({"message": "This email is already verified. You can sign in now."})
+
+            raw_token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+            now = now_iso()
+            expires = datetime.utcfromtimestamp(
+                datetime.utcnow().timestamp() + 86400
+            ).replace(microsecond=0).isoformat() + "Z"
+
+            con.execute(
+                "DELETE FROM email_tokens WHERE user_id=? AND token_type='verify'",
+                (user["id"],)
+            )
+            con.execute(
+                "INSERT INTO email_tokens(user_id,token_hash,token_type,expires_at,created_at) VALUES(?,?,?,?,?)",
+                (user["id"], token_hash, "verify", expires, now)
+            )
+            con.commit()
+
+        try:
+            send_email(
+                user["email"],
+                "Your new LBA email verification token",
+                f"Hello {user['full_name']},\\n\\n"
+                f"Here is your new LBA Admin email verification token:\\n\\n"
+                f"{raw_token}\\n\\n"
+                f"This token expires in 24 hours. Any previous verification token is no longer valid.\\n"
+            )
+        except Exception:
+            with db() as con:
+                con.execute("DELETE FROM email_tokens WHERE token_hash=?", (token_hash,))
+                con.commit()
+            return jsonify({
+                "error": "The verification email could not be sent right now. Please try again later."
+            }), 503
+
+        return jsonify({
+            "message": "A new verification token has been sent to your registered email address."
+        })
+
+
     @app.route("/api/auth/verify-email", methods=["POST"])
     def verify_email():
         data = request.get_json(silent=True) or {}
