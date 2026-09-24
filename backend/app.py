@@ -1151,15 +1151,39 @@ def import_workbook(file_storage):
             headers = [str(cell).strip().lower().replace(" ", "_") if cell is not None else "" for cell in rows[0]]
             for values in rows[1:]:
                 record = dict(zip(headers, values))
-                full_name = str(record.get("full_name") or record.get("name") or "").strip()
+                full_name = str(
+                    record.get("full_name")
+                    or record.get("name")
+                    or record.get("player_name")
+                    or record.get("player")
+                    or record.get("player_full_name")
+                    or ""
+                ).strip()
                 if not full_name:
-                    first = str(record.get("first_name") or record.get("firstname") or "").strip()
-                    last = str(record.get("last_name") or record.get("lastname") or "").strip()
+                    first = str(
+                        record.get("first_name")
+                        or record.get("firstname")
+                        or record.get("first")
+                        or ""
+                    ).strip()
+                    last = str(
+                        record.get("last_name")
+                        or record.get("lastname")
+                        or record.get("surname")
+                        or record.get("last")
+                        or ""
+                    ).strip()
                     full_name = f"{first} {last}".strip()
                 if not full_name:
                     skipped += 1
                     continue
-                category = str(record.get("category_code") or record.get("category") or sheet.title).strip()
+                category = str(
+                    record.get("category_code")
+                    or record.get("category")
+                    or record.get("category_name")
+                    or record.get("event_category")
+                    or sheet.title
+                ).strip()
                 payload = clean_player_payload({
                     "full_name": full_name,
                     "category_code": category,
