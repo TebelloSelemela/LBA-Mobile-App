@@ -2,6 +2,8 @@ import csv
 import io
 import os
 import secrets
+import smtplib
+from email.message import EmailMessage
 import sqlite3
 import re
 import hashlib
@@ -29,6 +31,12 @@ ADMIN_PASSWORD = os.environ.get("LBA_ADMIN_PASSWORD")
 if not ADMIN_PASSWORD:
     raise RuntimeError("LBA_ADMIN_PASSWORD must be set in the environment before starting the backend.")
 AUTH_TOKEN_DAYS = int(os.environ.get("LBA_AUTH_TOKEN_DAYS", "30"))
+SMTP_HOST = os.environ.get("LBA_SMTP_HOST")
+SMTP_PORT = int(os.environ.get("LBA_SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("LBA_SMTP_USERNAME")
+SMTP_PASSWORD = os.environ.get("LBA_SMTP_PASSWORD")
+SMTP_FROM = os.environ.get("LBA_SMTP_FROM") or SMTP_USERNAME
+PUBLIC_APP_URL = os.environ.get("LBA_PUBLIC_APP_URL", "")
 
 
 def create_app():
@@ -77,6 +85,116 @@ def create_app():
             "user": public_user(user),
             "expires_at": expires_at
         })
+
+
+    @app.route("/api/auth/register", methods=["POST"])
+    def register():
+        data = request.get_json(silent=True) or {}
+        full_name = (data.get("full_name") or "").strip()
+        username = (data.get("username") or "").strip()
+        email = (data.get("email") or "").strip().lower()
+        password = data.get("password") or ""
+
+        if not full_name or not username or not email or len(password) < 8:
+            return jsonify({"error": "Full name, username, email and a password of at least 8 characters are required"}), 400
+
+        now = now_iso()
+        with db() as con:
+            exists = con.execute("SELECT id FROM users WHERE LOWER(username)=LOWER(?) OR LOWER(email)=LOWER(?)", (username, email)).fetchone()
+            if exists:
+                return jsonify({"error": "Username or email is already registered"}), 409
+
+            con.execute("""
+                INSERT INTO users(username,email,full_name,password_hash,role,is_active,email_verified,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?)
+            """, (username, email, full_name, generate_password_hash(password), "Viewer", 1, 0, now, now))
+            user_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
+            raw_token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+            expires = datetime.utcfromtimestamp(datetime.utcnow().timestamp() + 86400).replace(microsecond=0).isoformat() + "Z"
+            con.execute("INSERT INTO email_tokens(user_id,token_hash,token_type,expires_at,created_at) VALUES(?,?,?,?,?)",
+                        (user_id, token_hash, "verify", expires, now))
+            con.commit()
+
+        send_email(
+            email,
+            "Verify your LBA Admin account",
+            f"Hello {full_name},\n\nYour LBA Admin account has been created. "
+            f"Use this verification code/link token to verify your email:\n\n{raw_token}\n\n"
+            f"This token expires in 24 hours.\n"
+        )
+        return jsonify({"message": "Registration successful. Check your email to verify your account."}), 201
+
+
+    @app.route("/api/auth/verify-email", methods=["POST"])
+    def verify_email():
+        data = request.get_json(silent=True) or {}
+        raw_token = (data.get("token") or "").strip()
+        if not raw_token:
+            return jsonify({"error": "Verification token is required"}), 400
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        with db() as con:
+            row = con.execute("""
+                SELECT user_id FROM email_tokens
+                WHERE token_hash=? AND token_type='verify' AND expires_at > ?
+            """, (token_hash, now_iso())).fetchone()
+            if not row:
+                return jsonify({"error": "Invalid or expired verification token"}), 400
+            con.execute("UPDATE users SET email_verified=1, updated_at=? WHERE id=?", (now_iso(), row["user_id"]))
+            con.execute("DELETE FROM email_tokens WHERE token_hash=?", (token_hash,))
+            con.commit()
+        return jsonify({"message": "Email verified. You can now sign in."})
+
+
+    @app.route("/api/auth/forgot-password", methods=["POST"])
+    def forgot_password():
+        data = request.get_json(silent=True) or {}
+        email = (data.get("email") or "").strip().lower()
+        if not email:
+            return jsonify({"error": "Email is required"}), 400
+        with db() as con:
+            user = con.execute("SELECT * FROM users WHERE LOWER(email)=LOWER(?) AND is_active=1", (email,)).fetchone()
+            if user:
+                raw_token = secrets.token_urlsafe(32)
+                token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+                now = now_iso()
+                expires = datetime.utcfromtimestamp(datetime.utcnow().timestamp() + 3600).replace(microsecond=0).isoformat() + "Z"
+                con.execute("DELETE FROM email_tokens WHERE user_id=? AND token_type='reset'", (user["id"],))
+                con.execute("INSERT INTO email_tokens(user_id,token_hash,token_type,expires_at,created_at) VALUES(?,?,?,?,?)",
+                            (user["id"], token_hash, "reset", expires, now))
+                con.commit()
+                send_email(
+                    user["email"],
+                    "Reset your LBA Admin password",
+                    f"Hello {user['full_name']},\n\nA password reset was requested for your LBA Admin account.\n\n"
+                    f"Use this reset token in the app:\n\n{raw_token}\n\n"
+                    f"The token expires in 1 hour. If you did not request this, ignore this email.\n"
+                )
+        return jsonify({"message": "If that email is registered, a password reset message has been sent."})
+
+
+    @app.route("/api/auth/reset-password", methods=["POST"])
+    def reset_password():
+        data = request.get_json(silent=True) or {}
+        raw_token = (data.get("token") or "").strip()
+        password = data.get("password") or ""
+        if not raw_token or len(password) < 8:
+            return jsonify({"error": "Reset token and a password of at least 8 characters are required"}), 400
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        with db() as con:
+            row = con.execute("""
+                SELECT user_id FROM email_tokens
+                WHERE token_hash=? AND token_type='reset' AND expires_at > ?
+            """, (token_hash, now_iso())).fetchone()
+            if not row:
+                return jsonify({"error": "Invalid or expired reset token"}), 400
+            now = now_iso()
+            con.execute("UPDATE users SET password_hash=?, updated_at=? WHERE id=?",
+                        (generate_password_hash(password), now, row["user_id"]))
+            con.execute("DELETE FROM email_tokens WHERE token_hash=?", (token_hash,))
+            con.execute("DELETE FROM auth_tokens WHERE user_id=?", (row["user_id"],))
+            con.commit()
+        return jsonify({"message": "Password reset successfully. Please sign in again."})
 
 
     @app.route("/api/auth/me")
@@ -478,6 +596,22 @@ def create_app():
     return app
 
 
+def send_email(to_address, subject, body):
+    if not SMTP_HOST or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM:
+        raise RuntimeError("Email service is not configured. Set LBA_SMTP_HOST, LBA_SMTP_USERNAME, LBA_SMTP_PASSWORD and LBA_SMTP_FROM.")
+
+    message = EmailMessage()
+    message["From"] = SMTP_FROM
+    message["To"] = to_address
+    message["Subject"] = subject
+    message.set_content(body)
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+        server.starttls()
+        server.login(SMTP_USERNAME, SMTP_PASSWORD)
+        server.send_message(message)
+
+
 def bearer_token():
     auth = request.headers.get("Authorization", "")
     return auth.replace("Bearer ", "", 1).strip()
@@ -609,6 +743,16 @@ def ensure_database():
         );
         CREATE INDEX IF NOT EXISTS idx_auth_tokens_hash ON auth_tokens(token_hash);
         CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id);
+        CREATE TABLE IF NOT EXISTS email_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            token_type TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_email_tokens_hash ON email_tokens(token_hash);
         """)
         admin = con.execute("SELECT id FROM users WHERE username=?", (ADMIN_USERNAME,)).fetchone()
         if not admin and ADMIN_PASSWORD:
