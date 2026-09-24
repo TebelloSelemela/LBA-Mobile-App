@@ -1143,65 +1143,130 @@ def import_workbook(file_storage):
     imported = 0
     skipped = 0
     now = now_iso()
+
     with db() as con:
         for sheet in wb.worksheets:
             rows = list(sheet.iter_rows(values_only=True))
             if not rows:
                 continue
-            headers = [str(cell).strip().lower().replace(" ", "_") if cell is not None else "" for cell in rows[0]]
-            for values in rows[1:]:
+
+            # LBA ranking workbooks may have title/metadata rows before the
+            # actual player-table header. Find the row containing Last Name
+            # and First Name instead of assuming the first row is the header.
+            header_index = None
+            for idx, row in enumerate(rows):
+                normalized = [
+                    str(cell).strip().lower().replace(" ", "_") if cell is not None else ""
+                    for cell in row
+                ]
+                if "last_name" in normalized and "first_name" in normalized:
+                    header_index = idx
+                    break
+
+            if header_index is None:
+                # Also support simple import sheets whose first row is already
+                # a standard header.
+                header_index = 0
+
+            headers = [
+                str(cell).strip().lower().replace(" ", "_") if cell is not None else ""
+                for cell in rows[header_index]
+            ]
+
+            # The official LBA ranking workbook stores:
+            # column B = rank, C = last name, D = first name,
+            # E = total points, F = tournaments played.
+            def get_value(record, *names):
+                for name in names:
+                    value = record.get(name)
+                    if value not in (None, ""):
+                        return value
+                return None
+
+            # Infer category/event information from the worksheet name.
+            sheet_name = str(sheet.title).strip()
+            category_from_sheet = sheet_name.replace(" ", "")
+            if category_from_sheet.upper().startswith("MS,U"):
+                category_from_sheet = category_from_sheet.upper()
+            elif category_from_sheet.upper().startswith("MS,18"):
+                category_from_sheet = "MS,18+"
+            elif category_from_sheet.upper().startswith("WS,U"):
+                category_from_sheet = category_from_sheet.upper()
+            elif category_from_sheet.upper().startswith("WS,18"):
+                category_from_sheet = "WS,18+"
+
+            for values in rows[header_index + 1:]:
                 record = dict(zip(headers, values))
-                full_name = str(
-                    record.get("full_name")
-                    or record.get("name")
-                    or record.get("player_name")
-                    or record.get("player")
-                    or record.get("player_full_name")
-                    or ""
-                ).strip()
+
+                full_name = str(get_value(
+                    record, "full_name", "name", "player_name",
+                    "player", "player_full_name"
+                ) or "").strip()
+
+                first = str(get_value(
+                    record, "first_name", "firstname", "first"
+                ) or "").strip()
+                last = str(get_value(
+                    record, "last_name", "lastname", "surname", "last"
+                ) or "").strip()
+
+                # Official LBA workbook uses C/D for last/first name.
                 if not full_name:
-                    first = str(
-                        record.get("first_name")
-                        or record.get("firstname")
-                        or record.get("first")
-                        or ""
-                    ).strip()
-                    last = str(
-                        record.get("last_name")
-                        or record.get("lastname")
-                        or record.get("surname")
-                        or record.get("last")
-                        or ""
-                    ).strip()
                     full_name = f"{first} {last}".strip()
+
                 if not full_name:
                     skipped += 1
                     continue
-                category = str(
-                    record.get("category_code")
-                    or record.get("category")
-                    or record.get("category_name")
-                    or record.get("event_category")
-                    or sheet.title
-                ).strip()
+
+                rank = get_value(
+                    record, "rank_position", "rank", "#"
+                )
+                total_points = get_value(
+                    record, "total_points", "points", "points_total"
+                )
+                tournaments_played = get_value(
+                    record, "tournaments_played", "tournaments", "tournament_played"
+                )
+
+                category = str(get_value(
+                    record, "category_code", "category", "category_name",
+                    "event_category"
+                ) or category_from_sheet).strip()
+
                 payload = clean_player_payload({
                     "full_name": full_name,
+                    "first_name": first,
+                    "last_name": last,
                     "category_code": category,
-                    "gender": record.get("gender"),
-                    "age_group": record.get("age_group"),
-                    "club": record.get("club"),
-                    "rank_position": record.get("rank_position") or record.get("rank"),
-                    "total_points": record.get("total_points") or record.get("points"),
-                    "tournaments_played": record.get("tournaments_played"),
+                    "gender": get_value(record, "gender"),
+                    "age_group": get_value(record, "age_group"),
+                    "event_type": get_value(record, "event_type"),
+                    "club": get_value(record, "club"),
+                    "rank_position": rank,
+                    "total_points": total_points,
+                    "tournaments_played": tournaments_played,
                     "status": "Active",
                     "notes": f"Imported from {sheet.title}",
                 })
+
                 con.execute("""
-                    INSERT INTO players(category_code,event_type,gender,age_group,club,rank_position,first_name,last_name,full_name,total_points,tournaments_played,status,notes,created_at,updated_at)
-                    VALUES(:category_code,:event_type,:gender,:age_group,:club,:rank_position,:first_name,:last_name,:full_name,:total_points,:tournaments_played,:status,:notes,:created_at,:updated_at)
+                    INSERT INTO players(
+                        category_code,event_type,gender,age_group,club,
+                        rank_position,first_name,last_name,full_name,
+                        total_points,tournaments_played,status,notes,
+                        created_at,updated_at
+                    )
+                    VALUES(
+                        :category_code,:event_type,:gender,:age_group,:club,
+                        :rank_position,:first_name,:last_name,:full_name,
+                        :total_points,:tournaments_played,:status,:notes,
+                        :created_at,:updated_at
+                    )
                 """, payload)
                 imported += 1
+
         con.commit()
+
     return imported, skipped
 
 
