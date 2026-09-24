@@ -599,9 +599,10 @@ def build_draw_pdf(draw):
     heading_style.textColor = colors.HexColor("#047857")
     heading_style.spaceAfter = 4
 
-    if LOGO_PATH.exists():
+    logo_path = BASE_DIR.parent / "frontend" / "src" / "assets" / "lba-logo.png"
+    if logo_path.exists():
         try:
-            story.append(Image(str(LOGO_PATH), width=26 * mm, height=26 * mm))
+            story.append(Image(str(logo_path), width=26 * mm, height=26 * mm))
             story.append(Spacer(1, 3 * mm))
         except Exception:
             pass
