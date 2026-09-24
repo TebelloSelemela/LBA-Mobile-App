@@ -10,7 +10,8 @@ from functools import wraps
 
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
@@ -20,6 +21,7 @@ from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Tabl
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DB = BASE_DIR.parent / "database" / "lba_rankings.db"
 DB_PATH = Path(os.environ.get("LBA_DB_PATH", DEFAULT_DB))
+LOGO_PATH = BASE_DIR.parent / "frontend" / "src" / "assets" / "lba-logo.png"
 ADMIN_USERNAME = os.environ.get("LBA_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("LBA_ADMIN_PASSWORD")
 if not ADMIN_PASSWORD:
@@ -50,14 +52,24 @@ def create_app():
             total = con.execute("SELECT COUNT(*) FROM players").fetchone()[0]
             active = con.execute("SELECT COUNT(*) FROM players WHERE status='Active'").fetchone()[0]
             categories = con.execute("SELECT COUNT(DISTINCT category_code) FROM players WHERE category_code IS NOT NULL AND category_code!=''").fetchone()[0]
-            top = con.execute("SELECT full_name, rank_position, total_points FROM players ORDER BY COALESCE(rank_position, 999999), full_name LIMIT 1").fetchone()
+            top = con.execute("SELECT id, full_name, category_code, club, rank_position, total_points FROM players ORDER BY COALESCE(rank_position, 999999), total_points DESC, full_name LIMIT 6").fetchall()
+            categories_breakdown = con.execute("""
+                SELECT category_code, event_type, age_group, COUNT(*) AS player_count
+                FROM players WHERE category_code IS NOT NULL AND category_code!=''
+                GROUP BY category_code, event_type, age_group
+                ORDER BY player_count DESC, category_code
+            """).fetchall()
+            recent = con.execute("SELECT action, details, created_at FROM audit_logs ORDER BY id DESC LIMIT 6").fetchall()
             draws = con.execute("SELECT COUNT(*) FROM draws").fetchone()[0]
         return jsonify({
             "totalPlayers": total,
             "activePlayers": active,
             "categories": categories,
             "draws": draws,
-            "topPlayer": dict(top) if top else None,
+            "topPlayer": dict(top[0]) if top else None,
+            "topPlayers": [dict(row) for row in top],
+            "categoryBreakdown": [dict(row) for row in categories_breakdown],
+            "recentActivity": [dict(row) for row in recent],
         })
 
     @app.route("/api/categories")
@@ -185,14 +197,61 @@ def create_app():
             writer.writerow([row[h] for h in headers])
         return Response(output.getvalue(), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=lba_players.csv"})
 
+    @app.route("/api/players/export.xlsx")
+    @require_auth
+    def export_players_xlsx():
+        with db() as con:
+            rows = con.execute("SELECT * FROM players ORDER BY COALESCE(rank_position,999999), full_name").fetchall()
+        headers = ["id","rank_position","full_name","first_name","last_name","gender","age_group","event_type","category_code","club","total_points","tournaments_played","status","notes"]
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "LBA Players"
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="0F766E")
+            cell.alignment = Alignment(horizontal="center")
+        for row in rows:
+            ws.append([row[h] for h in headers])
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+        widths = [9,12,30,18,18,12,12,20,15,20,14,18,12,42]
+        for i,width in enumerate(widths,1):
+            ws.column_dimensions[chr(64+i)].width = width
+        buf = io.BytesIO()
+        wb.save(buf); buf.seek(0)
+        return Response(buf.getvalue(), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition":"attachment; filename=lba_players.xlsx"})
+
+    @app.route("/api/players/import-template.xlsx")
+    @require_auth
+    def import_template():
+        wb = Workbook()
+        ws = wb.active; ws.title = "Players"
+        headers = ["full_name","first_name","last_name","gender","age_group","event_type","category_code","club","rank_position","total_points","tournaments_played","status","notes"]
+        ws.append(headers)
+        ws.append(["Example Player","Example","Player","Men","U15","Men's Singles","MS,U15","LBA Club",1,100,0,"Active",""])
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color="FFFFFF"); cell.fill = PatternFill("solid", fgColor="0F766E")
+        ws.freeze_panes = "A2"
+        for col in ws.columns:
+            ws.column_dimensions[col[0].column_letter].width = min(max(max(len(str(c.value or "")) for c in col)+2,12),34)
+        buf = io.BytesIO()
+        wb.save(buf); buf.seek(0)
+        return Response(buf.getvalue(), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition":"attachment; filename=lba_import_template.xlsx"})
+
     @app.route("/api/import/excel", methods=["POST"])
     @require_auth
     def import_excel():
         if "file" not in request.files:
             return jsonify({"error": "Upload an Excel file using field name 'file'"}), 400
         file = request.files["file"]
-        imported = import_workbook(file)
-        return jsonify({"imported": imported})
+        try:
+            imported, skipped = import_workbook(file)
+        except Exception as exc:
+            return jsonify({"error": f"Could not read Excel file: {exc}"}), 400
+        return jsonify({"imported": imported, "skipped": skipped})
 
     @app.route("/api/draws/random", methods=["POST"])
     @require_auth
@@ -541,8 +600,11 @@ def build_draw_pdf(draw):
     heading_style.spaceAfter = 4
 
     if LOGO_PATH.exists():
-        story.append(Image(str(LOGO_PATH), width=26 * mm, height=26 * mm))
-        story.append(Spacer(1, 3 * mm))
+        try:
+            story.append(Image(str(LOGO_PATH), width=26 * mm, height=26 * mm))
+            story.append(Spacer(1, 3 * mm))
+        except Exception:
+            pass
 
     story.append(Paragraph("Lesotho Badminton Association", title_style))
     story.append(Paragraph("Official Tournament Draw Sheet", heading_style))
@@ -603,6 +665,7 @@ def build_draw_pdf(draw):
 def import_workbook(file_storage):
     wb = load_workbook(file_storage, data_only=True)
     imported = 0
+    skipped = 0
     now = now_iso()
     with db() as con:
         for sheet in wb.worksheets:
@@ -618,6 +681,7 @@ def import_workbook(file_storage):
                     last = str(record.get("last_name") or record.get("lastname") or "").strip()
                     full_name = f"{first} {last}".strip()
                 if not full_name:
+                    skipped += 1
                     continue
                 category = str(record.get("category_code") or record.get("category") or sheet.title).strip()
                 payload = clean_player_payload({
@@ -638,7 +702,7 @@ def import_workbook(file_storage):
                 """, payload)
                 imported += 1
         con.commit()
-    return imported
+    return imported, skipped
 
 
 app = create_app()
