@@ -228,7 +228,7 @@ function App() {
             <button className="button secondary" onClick={() => exportFile("/players/export.xlsx","lba_players.xlsx")}><FileText size={16}/> Export Excel</button>
             <label className="button"><Upload size={16}/> Import Excel<input type="file" accept=".xlsx,.xls" onChange={importExcel} hidden /></label>
           </div>
-        </header>
+        </header>}
 
         <section className="stats">
           <Stat label="Total Players" value={dashboard?.totalPlayers ?? 0} />
