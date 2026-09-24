@@ -9,7 +9,11 @@
     "vite": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "lucide-react": "latest"
+    "lucide-react": "latest",
+    "@capacitor/core": "6.2.1",
+    "@capacitor/android": "6.2.1"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@capacitor/cli": "6.2.1"
+  }
 }
