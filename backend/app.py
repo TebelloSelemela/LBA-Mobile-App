@@ -193,14 +193,17 @@ def create_app():
         writer = csv.writer(output)
         # Export every player field so the downloaded register is a complete record.
         headers = [
-            "id", "source_ranking_id", "full_name", "first_name", "last_name",
-            "gender", "age_group", "event_type", "category_code", "club",
-            "rank_position", "total_points", "tournaments_played", "status",
-            "notes", "created_at", "updated_at"
+            ("Player ID", "id"), ("Source Ranking ID", "source_ranking_id"),
+            ("Full Name", "full_name"), ("First Name", "first_name"), ("Last Name", "last_name"),
+            ("Gender", "gender"), ("Age Group", "age_group"), ("Event Type", "event_type"),
+            ("Category", "category_code"), ("Club", "club"), ("Rank Position", "rank_position"),
+            ("Total Points", "total_points"), ("Tournaments Played", "tournaments_played"),
+            ("Status", "status"), ("Notes", "notes"), ("Created At", "created_at"),
+            ("Updated At", "updated_at")
         ]
-        writer.writerow(headers)
+        writer.writerow([label for label, _ in headers])
         for row in rows:
-            writer.writerow([row[h] for h in headers])
+            writer.writerow([row[key] for _, key in headers])
         return Response(output.getvalue(), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=lba_players.csv"})
 
     @app.route("/api/players/export.xlsx")
@@ -209,29 +212,84 @@ def create_app():
         with db() as con:
             rows = con.execute("SELECT * FROM players ORDER BY COALESCE(rank_position,999999), full_name").fetchall()
         # Keep the Excel register complete: include all fields stored for each player.
-        headers = [
-            "id", "source_ranking_id", "full_name", "first_name", "last_name",
-            "gender", "age_group", "event_type", "category_code", "club",
-            "rank_position", "total_points", "tournaments_played", "status",
-            "notes", "created_at", "updated_at"
+        # Human-readable labels keep the workbook understandable to tournament staff.
+        header_map = [
+            ("Player ID", "id"), ("Source Ranking ID", "source_ranking_id"),
+            ("Full Name", "full_name"), ("First Name", "first_name"), ("Last Name", "last_name"),
+            ("Gender", "gender"), ("Age Group", "age_group"), ("Event Type", "event_type"),
+            ("Category", "category_code"), ("Club", "club"), ("Rank Position", "rank_position"),
+            ("Total Points", "total_points"), ("Tournaments Played", "tournaments_played"),
+            ("Status", "status"), ("Notes", "notes"), ("Created At", "created_at"),
+            ("Updated At", "updated_at")
         ]
+        headers = [label for label, _ in header_map]
+        keys = [key for _, key in header_map]
+
         wb = Workbook()
+        wb.properties.title = "LBA Official Player Register"
+        wb.properties.subject = "Lesotho Badminton Association player register"
+        wb.properties.creator = "LBA Admin System"
+
         ws = wb.active
-        ws.title = "LBA Players"
-        ws.append(headers)
-        for cell in ws[1]:
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill("solid", fgColor="0F766E")
-            cell.alignment = Alignment(horizontal="center")
-        for row in rows:
-            ws.append([row[h] for h in headers])
+        ws.title = "Official Player Register"
+        ws.sheet_view.showGridLines = False
         ws.freeze_panes = "A2"
-        ws.auto_filter.ref = ws.dimensions
-        widths = [9, 16, 30, 18, 20, 12, 12, 20, 15, 22, 14, 14, 18, 12, 42, 22, 22]
+        ws.append(headers)
+
+        # Professional register header.
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color="FFFFFF", size=10)
+            cell.fill = PatternFill("solid", fgColor="0F766E")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = Border(
+                bottom=Side(style="medium", color="0B5F59")
+            )
+        ws.row_dimensions[1].height = 30
+
+        for row in rows:
+            ws.append([row[key] for key in keys])
+
+        # Make the register easy to read and print.
+        from openpyxl.utils import get_column_letter
+        from openpyxl.worksheet.table import Table, TableStyleInfo
+        widths = [11, 18, 30, 18, 20, 12, 12, 20, 15, 24, 14, 14, 20, 13, 42, 22, 22]
         for i, width in enumerate(widths, 1):
-            # Use column letters beyond Z safely if the export grows in future.
-            from openpyxl.utils import get_column_letter
             ws.column_dimensions[get_column_letter(i)].width = width
+
+        for row in ws.iter_rows(min_row=2):
+            row[0].alignment = Alignment(horizontal="center")
+            row[1].alignment = Alignment(horizontal="center")
+            row[5].alignment = Alignment(horizontal="center")
+            row[6].alignment = Alignment(horizontal="center")
+            row[8].alignment = Alignment(horizontal="center")
+            row[10].alignment = Alignment(horizontal="center")
+            row[11].number_format = "0.00"
+            row[12].alignment = Alignment(horizontal="center")
+            row[13].alignment = Alignment(horizontal="center")
+            row[14].alignment = Alignment(vertical="top", wrap_text=True)
+            row[15].alignment = Alignment(horizontal="center")
+            row[16].alignment = Alignment(horizontal="center")
+
+        if ws.max_row >= 2:
+            table = Table(displayName="LBAPlayerRegister", ref=f"A1:{get_column_letter(ws.max_column)}{ws.max_row}")
+            table.tableStyleInfo = TableStyleInfo(
+                name="TableStyleMedium4",
+                showFirstColumn=False,
+                showLastColumn=False,
+                showRowStripes=True,
+                showColumnStripes=False,
+            )
+            ws.add_table(table)
+
+        ws.auto_filter.ref = ws.dimensions
+        ws.print_title_rows = "1:1"
+        ws.page_setup.orientation = "landscape"
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.oddFooter.center.text = "Lesotho Badminton Association • Official Player Register"
+        ws.oddFooter.right.text = "Page &P of &N"
+
         buf = io.BytesIO()
         wb.save(buf); buf.seek(0)
         return Response(buf.getvalue(), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
