@@ -230,12 +230,12 @@ function App() {
           </div>
         </header>}
 
-        <section className="stats">
+        {activeTab !== 'home' && <section className="stats">
           <Stat label="Total Players" value={dashboard?.totalPlayers ?? 0} />
           <Stat label="Active Players" value={dashboard?.activePlayers ?? 0} />
           <Stat label="Categories" value={dashboard?.categories ?? 0} />
           <Stat label="Saved Draws" value={dashboard?.draws ?? 0} />
-        </section>
+        </section>}
 
         <div className="message">{message}</div>
         {activeTab === 'records' && <Records players={players} form={form} setForm={setForm} savePlayer={savePlayer} deletePlayer={deletePlayer} filters={filters} setFilters={setFilters} categoryOptions={categoryOptions} loadAll={loadAll} pointInputs={pointInputs} setPointInputs={setPointInputs} addPoints={addPoints} />}
