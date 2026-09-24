@@ -7,6 +7,9 @@ from email.message import EmailMessage
 import sqlite3
 import re
 import hashlib
+import json
+import urllib.request
+import urllib.error
 from datetime import datetime
 from pathlib import Path
 from functools import wraps
@@ -37,6 +40,8 @@ SMTP_USERNAME = os.environ.get("LBA_SMTP_USERNAME")
 SMTP_PASSWORD = os.environ.get("LBA_SMTP_PASSWORD")
 SMTP_FROM = os.environ.get("LBA_SMTP_FROM") or SMTP_USERNAME
 PUBLIC_APP_URL = os.environ.get("LBA_PUBLIC_APP_URL", "")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
+EMAIL_FROM = os.environ.get("LBA_EMAIL_FROM") or SMTP_FROM or "onboarding@resend.dev"
 
 
 def create_app():
@@ -599,8 +604,40 @@ def create_app():
 
 
 def send_email(to_address, subject, body):
+    # Railway deployments may block outbound SMTP connections. Prefer an HTTPS
+    # email API when configured, while retaining SMTP as a fallback for local use.
+    if RESEND_API_KEY:
+        payload = json.dumps({
+            "from": EMAIL_FROM,
+            "to": [to_address],
+            "subject": subject,
+            "text": body,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=20) as response:
+                if response.status < 200 or response.status >= 300:
+                    raise RuntimeError(f"Email API returned HTTP {response.status}")
+                return
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Email API returned HTTP {exc.code}: {detail[:500]}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Could not reach email API: {exc.reason}") from exc
+
     if not SMTP_HOST or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM:
-        raise RuntimeError("Email service is not configured. Set LBA_SMTP_HOST, LBA_SMTP_USERNAME, LBA_SMTP_PASSWORD and LBA_SMTP_FROM.")
+        raise RuntimeError(
+            "Email service is not configured. Set RESEND_API_KEY and LBA_EMAIL_FROM, "
+            "or configure the LBA_SMTP_* variables."
+        )
 
     message = EmailMessage()
     message["From"] = SMTP_FROM
