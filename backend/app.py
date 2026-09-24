@@ -123,13 +123,24 @@ def create_app():
                         (user_id, token_hash, "verify", expires, now))
             con.commit()
 
-        send_email(
-            email,
-            "Verify your LBA Admin account",
-            f"Hello {full_name},\n\nYour LBA Admin account has been created. "
-            f"Use this verification code/link token to verify your email:\n\n{raw_token}\n\n"
-            f"This token expires in 24 hours.\n"
-        )
+        try:
+            send_email(
+                email,
+                "Verify your LBA Admin account",
+                f"Hello {full_name},\n\nYour LBA Admin account has been created. "
+                f"Use this verification code/link token to verify your email:\n\n{raw_token}\n\n"
+                f"This token expires in 24 hours.\n"
+            )
+        except Exception:
+            # Do not leave an unusable unverified account behind when email delivery fails.
+            with db() as con:
+                con.execute("DELETE FROM email_tokens WHERE user_id=? AND token_type='verify'", (user_id,))
+                con.execute("DELETE FROM users WHERE id=? AND email_verified=0", (user_id,))
+                con.commit()
+            return jsonify({
+                "error": "Account could not be created because the verification email could not be sent. Please try again later."
+            }), 503
+
         return jsonify({"message": "Registration successful. Check your email to verify your account."}), 201
 
 
@@ -170,13 +181,21 @@ def create_app():
                 con.execute("INSERT INTO email_tokens(user_id,token_hash,token_type,expires_at,created_at) VALUES(?,?,?,?,?)",
                             (user["id"], token_hash, "reset", expires, now))
                 con.commit()
-                send_email(
-                    user["email"],
-                    "Reset your LBA Admin password",
-                    f"Hello {user['full_name']},\n\nA password reset was requested for your LBA Admin account.\n\n"
-                    f"Use this reset token in the app:\n\n{raw_token}\n\n"
-                    f"The token expires in 1 hour. If you did not request this, ignore this email.\n"
-                )
+                try:
+                    send_email(
+                        user["email"],
+                        "Reset your LBA Admin password",
+                        f"Hello {user['full_name']},\n\nA password reset was requested for your LBA Admin account.\n\n"
+                        f"Use this reset token in the app:\n\n{raw_token}\n\n"
+                        f"The token expires in 1 hour. If you did not request this, ignore this email.\n"
+                    )
+                except Exception:
+                    # Remove the unusable reset token so a failed delivery cannot leave a misleading reset state.
+                    con.execute("DELETE FROM email_tokens WHERE token_hash=?", (token_hash,))
+                    con.commit()
+                    return jsonify({
+                        "error": "The password reset email could not be sent right now. Please try again later."
+                    }), 503
         return jsonify({"message": "If that email is registered, a password reset message has been sent."})
 
 
