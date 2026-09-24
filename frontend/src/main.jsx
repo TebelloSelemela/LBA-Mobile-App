@@ -66,7 +66,12 @@ function App() {
   const [theme, setTheme] = useState(localStorage.getItem('lba_theme') || 'dark');
   const [menuOpen, setMenuOpen] = useState(false);
   const [booting, setBooting] = useState(true);
-  const [login, setLogin] = useState({ username: 'admin', password: '' });
+  const [login, setLogin] = useState({ username: '', password: '' });
+  const [authView, setAuthView] = useState('login');
+  const [registerForm, setRegisterForm] = useState({ full_name: '', username: '', email: '', password: '', confirm_password: '' });
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [verifyToken, setVerifyToken] = useState('');
+  const [resetForm, setResetForm] = useState({ token: '', password: '', confirm_password: '' });
   const [message, setMessage] = useState('Welcome to the LBA administration system.');
   const [dashboard, setDashboard] = useState(null);
   const [players, setPlayers] = useState([]);
@@ -121,6 +126,78 @@ function App() {
       setMessage(`Welcome, ${data.user.full_name}.`);
     } catch (err) {
       setMessage(err.message || 'Failed to login.');
+    }
+  }
+
+  async function doRegister(e) {
+    e.preventDefault();
+    if (registerForm.password !== registerForm.confirm_password) {
+      setMessage('Passwords do not match.');
+      return;
+    }
+    try {
+      await api('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({
+          full_name: registerForm.full_name,
+          username: registerForm.username,
+          email: registerForm.email,
+          password: registerForm.password
+        })
+      });
+      setVerifyToken('');
+      setAuthView('verify');
+      setMessage('Account created. Check your email for the verification token.');
+    } catch (err) {
+      setMessage(err.message || 'Registration failed.');
+    }
+  }
+
+  async function doVerifyEmail(e) {
+    e.preventDefault();
+    try {
+      await api('/auth/verify-email', {
+        method: 'POST',
+        body: JSON.stringify({ token: verifyToken.trim() })
+      });
+      setAuthView('login');
+      setMessage('Email verified successfully. You can now sign in.');
+    } catch (err) {
+      setMessage(err.message || 'Email verification failed.');
+    }
+  }
+
+  async function doForgotPassword(e) {
+    e.preventDefault();
+    try {
+      const data = await api('/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email: forgotEmail.trim() })
+      });
+      setAuthView('reset');
+      setResetForm({ token: '', password: '', confirm_password: '' });
+      setMessage(data?.message || 'If that email exists, a reset token has been sent.');
+    } catch (err) {
+      setMessage(err.message || 'Could not start password reset.');
+    }
+  }
+
+  async function doResetPassword(e) {
+    e.preventDefault();
+    if (resetForm.password !== resetForm.confirm_password) {
+      setMessage('Passwords do not match.');
+      return;
+    }
+    try {
+      await api('/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({ token: resetForm.token.trim(), new_password: resetForm.password })
+      });
+      setAuthView('login');
+      setLogin({ username: '', password: '' });
+      setMessage('Password reset successfully. Sign in with your new password.');
+    } catch (err) {
+      setMessage(err.message || 'Password reset failed.');
     }
   }
 
@@ -208,13 +285,40 @@ function App() {
   }
   async function exportCsv() { return exportFile('/players/export.csv', 'lba_players.csv'); }
 
-  function logout() {
+  async function logout() {
+    try { if (getToken()) await api('/auth/logout', { method: 'POST' }); } catch {}
     localStorage.removeItem('lba_token');
+    localStorage.removeItem('lba_user');
     setToken('');
+    setCurrentUser(null);
+    setAuthView('login');
+    setMessage('You have been signed out.');
   }
 
   if (!token) {
-    return <><LoginScreen login={login} setLogin={setLogin} doLogin={doLogin} message={message} />{booting && <BootSplash />}</>;
+    return <>
+      <AuthScreen
+        view={authView}
+        setView={setAuthView}
+        login={login}
+        setLogin={setLogin}
+        doLogin={doLogin}
+        registerForm={registerForm}
+        setRegisterForm={setRegisterForm}
+        doRegister={doRegister}
+        verifyToken={verifyToken}
+        setVerifyToken={setVerifyToken}
+        doVerifyEmail={doVerifyEmail}
+        forgotEmail={forgotEmail}
+        setForgotEmail={setForgotEmail}
+        doForgotPassword={doForgotPassword}
+        resetForm={resetForm}
+        setResetForm={setResetForm}
+        doResetPassword={doResetPassword}
+        message={message}
+      />
+      {booting && <BootSplash />}
+    </>;
   }
 
   return (
@@ -282,9 +386,87 @@ function BootSplash() {
   </div>;
 }
 
-function LoginScreen({ login, setLogin, doLogin, message }) {
-  return <div className="login-page"><form className="login-card" onSubmit={doLogin}><img src={logo} alt="Lesotho Badminton Association logo" className="login-logo" /><div className="lock"><Lock /></div><h1>LBA Admin Login</h1><p>Use your local admin credentials to access ranking records.</p><input placeholder="Username or email" value={login.username} onChange={e => setLogin({ ...login, username: e.target.value })}/><input placeholder="Password" type="password" value={login.password} onChange={e => setLogin({ ...login, password: e.target.value })}/><button className="button full">Login</button><small>{message}</small></form></div>;
+function AuthScreen({
+  view, setView, login, setLogin, doLogin,
+  registerForm, setRegisterForm, doRegister,
+  verifyToken, setVerifyToken, doVerifyEmail,
+  forgotEmail, setForgotEmail, doForgotPassword,
+  resetForm, setResetForm, doResetPassword, message
+}) {
+  const title = {
+    login: 'LBA Admin Login',
+    register: 'Create LBA Account',
+    verify: 'Verify Your Email',
+    forgot: 'Forgot Password',
+    reset: 'Reset Password'
+  }[view];
+
+  const subtitle = {
+    login: 'Sign in to the Lesotho Badminton Association administration portal.',
+    register: 'Create your individual committee account.',
+    verify: 'Enter the verification token sent to your email.',
+    forgot: 'Enter your email and we will send a password reset token.',
+    reset: 'Enter the token from your email and choose a new password.'
+  }[view];
+
+  return <div className="login-page">
+    <form className="login-card auth-card" onSubmit={
+      view === 'login' ? doLogin :
+      view === 'register' ? doRegister :
+      view === 'verify' ? doVerifyEmail :
+      view === 'forgot' ? doForgotPassword : doResetPassword
+    }>
+      <img src={logo} alt="Lesotho Badminton Association logo" className="login-logo" />
+      <div className="lock"><Lock /></div>
+      <h1>{title}</h1>
+      <p>{subtitle}</p>
+
+      {view === 'login' && <>
+        <input placeholder="Username or email" autoComplete="username" value={login.username} onChange={e => setLogin({ ...login, username: e.target.value })}/>
+        <input placeholder="Password" type="password" autoComplete="current-password" value={login.password} onChange={e => setLogin({ ...login, password: e.target.value })}/>
+        <button className="button full">Login</button>
+        <div className="auth-links">
+          <button type="button" onClick={() => setView('forgot')}>Forgot password?</button>
+          <button type="button" onClick={() => setView('register')}>Create account</button>
+        </div>
+      </>}
+
+      {view === 'register' && <>
+        <input placeholder="Full name" autoComplete="name" value={registerForm.full_name} onChange={e => setRegisterForm({ ...registerForm, full_name: e.target.value })}/>
+        <input placeholder="Username" autoComplete="username" value={registerForm.username} onChange={e => setRegisterForm({ ...registerForm, username: e.target.value })}/>
+        <input placeholder="Email address" type="email" autoComplete="email" value={registerForm.email} onChange={e => setRegisterForm({ ...registerForm, email: e.target.value })}/>
+        <input placeholder="Password (8+ characters)" type="password" autoComplete="new-password" value={registerForm.password} onChange={e => setRegisterForm({ ...registerForm, password: e.target.value })}/>
+        <input placeholder="Confirm password" type="password" autoComplete="new-password" value={registerForm.confirm_password} onChange={e => setRegisterForm({ ...registerForm, confirm_password: e.target.value })}/>
+        <button className="button full">Create account</button>
+        <div className="auth-links"><button type="button" onClick={() => setView('login')}>Back to login</button></div>
+      </>}
+
+      {view === 'verify' && <>
+        <input placeholder="Verification token" value={verifyToken} onChange={e => setVerifyToken(e.target.value)} autoComplete="one-time-code"/>
+        <button className="button full">Verify email</button>
+        <div className="auth-links"><button type="button" onClick={() => setView('login')}>Back to login</button><button type="button" onClick={() => setView('register')}>Register again</button></div>
+      </>}
+
+      {view === 'forgot' && <>
+        <input placeholder="Email address" type="email" autoComplete="email" value={forgotEmail} onChange={e => setForgotEmail(e.target.value)}/>
+        <button className="button full">Send reset email</button>
+        <div className="auth-links"><button type="button" onClick={() => setView('login')}>Back to login</button></div>
+      </>}
+
+      {view === 'reset' && <>
+        <input placeholder="Reset token" value={resetForm.token} onChange={e => setResetForm({ ...resetForm, token: e.target.value })} autoComplete="one-time-code"/>
+        <input placeholder="New password (8+ characters)" type="password" autoComplete="new-password" value={resetForm.password} onChange={e => setResetForm({ ...resetForm, password: e.target.value })}/>
+        <input placeholder="Confirm new password" type="password" autoComplete="new-password" value={resetForm.confirm_password} onChange={e => setResetForm({ ...resetForm, confirm_password: e.target.value })}/>
+        <button className="button full">Reset password</button>
+        <div className="auth-links"><button type="button" onClick={() => setView('login')}>Back to login</button></div>
+      </>}
+
+      <small className="auth-message">{message}</small>
+      {view === 'login' && <small className="auth-note">Accounts must be verified by email before first sign-in.</small>}
+    </form>
+  </div>;
 }
+
 
 function Records({ players, form, setForm, savePlayer, deletePlayer, filters, setFilters, categoryOptions, loadAll, pointInputs, setPointInputs, addPoints }) {
   return <section className="grid two"><div className="panel"><h3>{form.id ? 'Update Player' : 'Add Player'}</h3><form onSubmit={savePlayer} className="form"><Input label="Full name" value={form.full_name} onChange={v => setForm({ ...form, full_name: v })}/><div className="form-row"><Input label="First name" value={form.first_name} onChange={v => setForm({ ...form, first_name: v })}/><Input label="Last name" value={form.last_name} onChange={v => setForm({ ...form, last_name: v })}/></div><div className="form-row"><Input label="Category" value={form.category_code} onChange={v => setForm({ ...form, category_code: v })}/><Input label="Age group" value={form.age_group} onChange={v => setForm({ ...form, age_group: v })}/></div><div className="form-row"><Input label="Gender" value={form.gender} onChange={v => setForm({ ...form, gender: v })}/><Input label="Club" value={form.club} onChange={v => setForm({ ...form, club: v })}/></div><div className="form-row"><Input label="Rank" type="number" value={form.rank_position} onChange={v => setForm({ ...form, rank_position: v })}/><Input label="Total points correction" type="number" value={form.total_points} onChange={v => setForm({ ...form, total_points: v })}/></div><p className="helper">Use the table's “Add points” box to add latest tournament points. Example: 120 + 20 = 140.</p><label><span>Status</span><select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}><option>Active</option><option>Inactive</option></select></label><label><span>Notes</span><textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}/></label><div className="actions"><button className="button"><Plus size={16}/> Save</button><button type="button" className="button secondary" onClick={() => setForm(emptyForm())}>Clear</button></div></form></div><div className="panel wide"><div className="toolbar"><div className="search"><Search size={16}/><input placeholder="Search player, club or category" value={filters.q} onChange={e => setFilters({ ...filters, q: e.target.value })} onKeyDown={e => e.key === 'Enter' && loadAll()} /></div><select value={filters.category} onChange={e => setFilters({ ...filters, category: e.target.value })}>{categoryOptions.map(c => <option key={c}>{c}</option>)}</select><select value={filters.status} onChange={e => setFilters({ ...filters, status: e.target.value })}><option>All</option><option>Active</option><option>Inactive</option></select><button className="icon-btn" onClick={loadAll}><RefreshCw size={16}/></button></div><div className="table-wrap"><table><thead><tr><th>Rank</th><th>Name</th><th>Category</th><th>Club</th><th>Points</th><th>Add latest points</th><th>Status</th><th></th></tr></thead><tbody>{players.map(p => <tr key={p.id}><td>#{p.rank_position || '-'}</td><td><b>{p.full_name}</b><small>{p.gender} · {p.age_group}</small></td><td>{p.category_code}</td><td>{p.club || '-'}</td><td><b>{p.total_points}</b></td><td><div className="points-add"><input type="number" placeholder="+ points" value={pointInputs[p.id] || ''} onChange={e => setPointInputs(current => ({ ...current, [p.id]: e.target.value }))}/><button className="mini green" onClick={() => addPoints(p)}>Add</button></div></td><td><span className={p.status === 'Active' ? 'badge green' : 'badge'}>{p.status}</span></td><td><button className="mini" onClick={() => setForm(p)}>Edit</button><button className="mini danger" onClick={() => deletePlayer(p.id)}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div></div></section>;
