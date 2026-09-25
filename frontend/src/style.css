@@ -236,3 +236,16 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
 :root[data-theme="light"] .history-card-grid small{color:#607588}
 :root[data-theme="light"] .history-card-grid>div{background:#fff}
 @media(max-width:700px){.history-card-title{flex-direction:column}.history-card-title span{text-align:left}.history-card-grid{grid-template-columns:1fr}}
+
+
+/* Tournament system record readability */
+.audit-list{display:flex;flex-direction:column;gap:10px}
+.audit-row{display:flex;flex-direction:column;gap:5px;padding:12px 13px;border:1px solid rgba(49,211,154,.14);border-radius:14px;background:rgba(255,255,255,.025)}
+.audit-row>b{display:block;font-size:13px;line-height:1.25;text-transform:uppercase;letter-spacing:.04em;color:#eef7ff}
+.audit-row>small{display:block;font-size:11px;line-height:1.45;color:#91a5b7}
+.audit-detail{display:block;font-size:12px;line-height:1.55;color:#dbe8ef;overflow-wrap:anywhere}
+.result-save-button{min-width:120px;justify-content:center;font-weight:900}
+:root[data-theme="light"] .audit-row{background:#f8fbfd;border-color:#d4e9e1}
+:root[data-theme="light"] .audit-row>b{color:#142b3b}
+:root[data-theme="light"] .audit-row>small{color:#607588}
+:root[data-theme="light"] .audit-detail{color:#334b5d}
