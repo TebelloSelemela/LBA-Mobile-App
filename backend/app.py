@@ -972,34 +972,23 @@ def now_iso():
 def ensure_database():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with db() as con:
-        con.executescript("""        # Backward-compatible columns for existing draw records.
+        # Backward-compatible columns for existing draw records.
         for column, definition in [
-            ("tournament_id", "INTEGER"),
-            ("event_name", "TEXT"),
-            ("round_name", "TEXT"),
-            ("match_code", "TEXT"),
-            ("court", "TEXT"),
-            ("result_entered_by", "TEXT"),
-            ("result_entered_at", "TEXT"),
-            ("result_updated_at", "TEXT"),
+            ("tournament_id", "INTEGER"), ("event_name", "TEXT"), ("round_name", "TEXT"),
         ]:
             try:
                 con.execute(f"ALTER TABLE draws ADD COLUMN {column} {definition}")
             except sqlite3.OperationalError:
                 pass
         for column, definition in [
-            ("match_code", "TEXT"),
-            ("court", "TEXT"),
-            ("result_entered_by", "TEXT"),
-            ("result_entered_at", "TEXT"),
-            ("result_updated_at", "TEXT"),
+            ("match_code", "TEXT"), ("court", "TEXT"), ("result_entered_by", "TEXT"),
+            ("result_entered_at", "TEXT"), ("result_updated_at", "TEXT"),
         ]:
             try:
                 con.execute(f"ALTER TABLE draw_matches ADD COLUMN {column} {definition}")
             except sqlite3.OperationalError:
                 pass
-
-
+        con.executescript("""
         CREATE TABLE IF NOT EXISTS players (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             source_ranking_id INTEGER,
