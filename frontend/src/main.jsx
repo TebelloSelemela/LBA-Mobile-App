@@ -589,6 +589,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const [form, setForm] = useState({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft'});
   const [draw, setDraw] = useState({title:'Tournament Draw',category_code:'All',draw_type:'Singles',event_name:"Men's Singles",seed_by_rank:false,player_ids:[]});
   const [openResult, setOpenResult] = useState(null);
+  const [resultDirty, setResultDirty] = useState(false);
   const [games, setGames] = useState([{a:'',b:''},{a:'',b:''},{a:'',b:''}]);
   const [busy, setBusy] = useState(false);
   const [historyDetails, setHistoryDetails] = useState({});
@@ -758,6 +759,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       }
 
       setOpenResult(null);
+      setResultDirty(false);
       const updated = await load(selectedId);
       await refresh();
 
@@ -939,10 +941,10 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
                     <button className="mini" onClick={()=>startResult(m)}>Record Result</button>}
                   {openResult === m.id && <div className="form result-entry">
                     <b>Enter game scores — best of 3</b>
-                    {games.map((g,i)=><div className="grid two" key={i}><Input label={'Game '+(i+1)+' · Player A'} type="number" value={g.a} onChange={v=>setGames(gs=>gs.map((x,j)=>j===i?{...x,a:v}:x))}/><Input label={'Game '+(i+1)+' · Player B'} type="number" value={g.b} onChange={v=>setGames(gs=>gs.map((x,j)=>j===i?{...x,b:v}:x))}/></div>)}
+                    {games.map((g,i)=><div className="grid two" key={i}><Input label={'Game '+(i+1)+' · Player A'} type="number" value={g.a} onChange={v=>{setResultDirty(true);setGames(gs=>gs.map((x,j)=>j===i?{...x,a:v}:x))}}/><Input label={'Game '+(i+1)+' · Player B'} type="number" value={g.b} onChange={v=>{setResultDirty(true);setGames(gs=>gs.map((x,j)=>j===i?{...x,b:v}:x))}}/></div>)}
                     <small className="helper">Badminton scoring: 21-point games, win by 2 after 20-all, with 30 as the maximum.</small>
-                    <button className="button" onClick={()=>saveResult(m.id)} disabled={busy || !games.some(g=>g.a !== '' || g.b !== '')}>
-                      {busy ? 'Saving Result…' : games.some(g=>g.a !== '' || g.b !== '') ? 'Save Result' : 'Record Results'}
+                    <button className={resultDirty ? "button result-save-button" : "button"} onClick={()=>saveResult(m.id)} disabled={busy || !resultDirty}>
+                      {busy ? 'Saving Results…' : resultDirty ? 'Save Results' : 'Record Results'}
                     </button>
                   </div>}
                 </div>;
