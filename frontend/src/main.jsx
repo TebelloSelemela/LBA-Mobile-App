@@ -704,36 +704,64 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     const used = games
       .filter(g => g.a !== '' && g.b !== '')
       .map(g => ({side_a_score:Number(g.a),side_b_score:Number(g.b)}));
-    if (!used.length) { setMessage('Enter at least one game score.'); return; }
+
+    if (used.length < 2) {
+      setMessage('A badminton match needs at least two completed games. Enter Game 1 and Game 2, then Game 3 only if needed.');
+      return;
+    }
+
+    const game1Winner = used[0].side_a_score > used[0].side_b_score ? 'A' : 'B';
+    const game2Winner = used[1].side_a_score > used[1].side_b_score ? 'A' : 'B';
+    if (game1Winner === game2Winner && used.length > 2) {
+      setMessage('The match is already decided after two games. Remove Game 3 or leave it blank.');
+      return;
+    }
+    if (game1Winner !== game2Winner && used.length < 3) {
+      setMessage('The first two games are split. Enter Game 3 to decide the match.');
+      return;
+    }
 
     setBusy(true);
     try {
-      await api('/matches/'+matchId+'/result', {method:'POST',body:JSON.stringify({games:used})});
+      const saved = await api('/matches/'+matchId+'/result', {
+        method:'POST',
+        body:JSON.stringify({games:used})
+      });
+
+      // Do not close the result editor until the server has confirmed the
+      // match as Completed.
+      if (!saved || saved.status !== 'Completed' || !saved.winner) {
+        throw new Error('The server did not confirm the match result as completed.');
+      }
+
       setOpenResult(null);
       const updated = await load(selectedId);
       await refresh();
 
-      // As soon as every match in the current round is complete, create the
-      // next round automatically. The administrator still explicitly finishes
-      // the tournament at the end.
       const updatedRounds = {};
       (updated?.matches || []).forEach(m => {
         const rn=Number(m.round_number || 1);
         if (!updatedRounds[rn]) updatedRounds[rn]=[];
         updatedRounds[rn].push(m);
       });
-      const latestRn=Math.max(...Object.keys(updatedRounds).map(Number));
+
+      const roundNumbers=Object.keys(updatedRounds).map(Number).sort((a,b)=>a-b);
+      const latestRn=roundNumbers[roundNumbers.length-1];
       const latestMatches=updatedRounds[latestRn] || [];
       const latestDrawStage=latestMatches[0]?.stage || '';
       const nextAlreadyExists=(updated?.matches || []).some(m => Number(m.round_number || 1) > latestRn);
+
       if (latestMatches.length && latestMatches.every(m => m.status === 'Completed') && latestDrawStage !== 'Final' && !nextAlreadyExists) {
         await generateNextRound(true);
-        setMessage('Result saved. All winners from the completed round have been advanced and the next draw is ready.');
+        setMessage('Match result saved. All winners have advanced to the next round.');
       } else {
-        setMessage('Match result recorded.');
+        setMessage(saved.winner+' won the match. Result saved successfully.');
       }
-    } catch (e) { setMessage(e.message); }
-    finally { setBusy(false); }
+    } catch (e) {
+      setMessage('Result was not saved: '+e.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function finishTournament() {
