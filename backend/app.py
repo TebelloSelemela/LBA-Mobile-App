@@ -581,61 +581,51 @@ def create_app():
     @app.route("/api/draws/random", methods=["POST"])
     @require_auth
     def random_draw():
-        data = request.get_json(silent=True) or {}
+        data=request.get_json(silent=True) or {}
+        return random_draw_impl(data)
+
+    def random_draw_impl(data):
         title = (data.get("title") or "Random Draw").strip()
         category = (data.get("category_code") or "All").strip()
         draw_type = (data.get("draw_type") or "Singles").strip()
         seed_by_rank = bool(data.get("seed_by_rank", False))
-        selected_ids = data.get("player_ids") or []
-        selected_ids = [nullable_int(pid) for pid in selected_ids]
+        selected_ids = [nullable_int(pid) for pid in (data.get("player_ids") or [])]
         selected_ids = [pid for pid in selected_ids if pid is not None]
-
+        tournament_id=nullable_int(data.get("tournament_id"))
+        event_name=(data.get("event_name") or "").strip()
+        round_name=(data.get("round_name") or "").strip()
         with db() as con:
+            if tournament_id and not con.execute("SELECT id FROM tournaments WHERE id=?",(tournament_id,)).fetchone():
+                return jsonify({"error":"Tournament not found"}),404
             if selected_ids:
-                placeholders = ",".join("?" for _ in selected_ids)
-                sql = f"SELECT * FROM players WHERE status='Active' AND id IN ({placeholders})"
-                players = [dict(row) for row in con.execute(sql, selected_ids).fetchall()]
-                # Preserve the admin's selected order before shuffling/seeding.
-                order = {pid: index for index, pid in enumerate(selected_ids)}
-                players.sort(key=lambda row: order.get(row["id"], 999999))
+                placeholders=",".join("?" for _ in selected_ids)
+                players=[dict(row) for row in con.execute(f"SELECT * FROM players WHERE status='Active' AND id IN ({placeholders})",selected_ids).fetchall()]
+                order={pid:i for i,pid in enumerate(selected_ids)}; players.sort(key=lambda row:order.get(row["id"],999999))
             else:
-                args = []
-                sql = "SELECT * FROM players WHERE status='Active'"
-                if category and category != "All":
-                    sql += " AND category_code=?"
-                    args.append(category)
-                players = [dict(row) for row in con.execute(sql, args).fetchall()]
-
-            if len(players) == 0:
-                return jsonify({"error": "No active selected players found for this draw"}), 400
-
-            if seed_by_rank:
-                players.sort(key=lambda x: (x.get("rank_position") is None, x.get("rank_position") or 999999))
+                args=[]; sql="SELECT * FROM players WHERE status='Active'"
+                if category and category!="All": sql+=" AND category_code=?"; args.append(category)
+                players=[dict(row) for row in con.execute(sql,args).fetchall()]
+            if not players:return jsonify({"error":"No active selected players found for this draw"}),400
+            if seed_by_rank: players.sort(key=lambda x:(x.get("rank_position") is None,x.get("rank_position") or 999999))
             else:
-                import random
-                random.shuffle(players)
-
-            fixtures = build_fixtures(players, draw_type)
-            now = now_iso()
-            cur = con.execute(
-                "INSERT INTO draws(title,category_code,draw_type,created_at) VALUES(?,?,?,?)",
-                (title, category, draw_type, now),
-            )
-            draw_id = cur.lastrowid
+                import random; random.shuffle(players)
+            fixtures=build_fixtures(players,draw_type); now=now_iso()
+            cur=con.execute("INSERT INTO draws(title,category_code,draw_type,created_at,tournament_id,event_name,round_name) VALUES(?,?,?,?,?,?,?)",
+                            (title,category,draw_type,now,tournament_id,event_name,round_name))
+            draw_id=cur.lastrowid
             for fixture in fixtures:
-                con.execute("""
-                    INSERT INTO draw_matches(draw_id,match_no,side_a,side_b,side_a_player_ids,side_b_player_ids,status)
-                    VALUES(?,?,?,?,?,?,?)
-                """, (draw_id, fixture["match_no"], fixture["side_a"], fixture["side_b"], fixture["side_a_player_ids"], fixture["side_b_player_ids"], "Pending"))
-            con.execute("""
-                INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at)
-                VALUES(?,?,?,?,?,?)
-            """, (ADMIN_USERNAME, "GENERATE_DRAW", "draws", draw_id,
-                  f"{title}: {len(players)} selected participant(s), {len(fixtures)} match(es)", now))
-            con.commit()
-            draw = get_draw(con, draw_id)
-            draw["selected_player_count"] = len(players)
-        return jsonify(draw), 201
+                code=f"{tournament_id and 'LBA' or 'DRAW'}-{tournament_id or draw_id:02d}-{draw_id:03d}-{fixture['match_no']:03d}"
+                con.execute("""INSERT INTO draw_matches(draw_id,match_no,side_a,side_b,side_a_player_ids,side_b_player_ids,status,match_code)
+                               VALUES(?,?,?,?,?,?,?,?)""",
+                            (draw_id,fixture["match_no"],fixture["side_a"],fixture["side_b"],fixture["side_a_player_ids"],fixture["side_b_player_ids"],"Pending",code))
+            if tournament_id:
+                con.execute("UPDATE tournaments SET status='Draw Generated',updated_at=? WHERE id=?",(now,tournament_id))
+                con.execute("INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at) VALUES(?,?,?,?,?)",
+                            (tournament_id,g.current_user["username"],"DRAW_GENERATED",f"{title}: {len(fixtures)} match(es)",now))
+            con.execute("INSERT INTO audit_logs(actor,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
+                        (g.current_user["username"],"GENERATE_DRAW","draws",draw_id,f"{title}: {len(players)} selected participant(s), {len(fixtures)} match(es)",now))
+            con.commit(); draw=get_draw(con,draw_id); draw["selected_player_count"]=len(players)
+        return jsonify(draw),201
 
     @app.route("/api/draws")
     @require_auth
@@ -668,6 +658,189 @@ def create_app():
             mimetype="application/pdf",
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
+
+    @app.route("/api/tournaments", methods=["GET"])
+    @require_auth
+    def list_tournaments():
+        with db() as con:
+            rows = con.execute("""
+                SELECT t.*,
+                       COUNT(DISTINCT d.id) AS draw_count,
+                       COUNT(DISTINCT CASE WHEN dm.status='Completed' THEN dm.id END) AS completed_matches,
+                       COUNT(DISTINCT dm.id) AS total_matches
+                FROM tournaments t
+                LEFT JOIN draws d ON d.tournament_id=t.id
+                LEFT JOIN draw_matches dm ON dm.draw_id=d.id
+                GROUP BY t.id
+                ORDER BY t.id DESC
+            """).fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.route("/api/tournaments", methods=["POST"])
+    @require_auth
+    def create_tournament():
+        data=request.get_json(silent=True) or {}
+        name=(data.get("name") or "").strip()
+        if not name:
+            return jsonify({"error":"Tournament name is required"}),400
+        code=(data.get("tournament_code") or "").strip().upper()
+        if not code:
+            base=re.sub(r"[^A-Z0-9]+","-",name.upper()).strip("-")
+            code=f"{base[:24] or 'LBA-TOURNAMENT'}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')[-6:]}"
+        now=now_iso()
+        with db() as con:
+            try:
+                cur=con.execute("""
+                    INSERT INTO tournaments(tournament_code,name,venue,start_date,end_date,status,description,created_by,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)
+                """,(code,name,(data.get("venue") or "").strip(),(data.get("start_date") or "").strip(),
+                    (data.get("end_date") or "").strip(),(data.get("status") or "Draft").strip(),
+                    (data.get("description") or "").strip(),g.current_user["username"],now,now))
+            except sqlite3.IntegrityError:
+                return jsonify({"error":"Tournament code already exists"}),409
+            tid=cur.lastrowid
+            con.execute("INSERT INTO audit_logs(actor,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
+                        (g.current_user["username"],"CREATE_TOURNAMENT","tournaments",tid,f"{name} ({code})",now))
+            con.commit()
+            row=con.execute("SELECT * FROM tournaments WHERE id=?",(tid,)).fetchone()
+        return jsonify(dict(row)),201
+
+    @app.route("/api/tournaments/<int:tournament_id>", methods=["GET"])
+    @require_auth
+    def get_tournament(tournament_id):
+        with db() as con:
+            t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+            if not t: return jsonify({"error":"Tournament not found"}),404
+            draws=con.execute("SELECT * FROM draws WHERE tournament_id=? ORDER BY id DESC",(tournament_id,)).fetchall()
+            matches=con.execute("""
+                SELECT dm.*, d.event_name, d.round_name AS draw_round, d.title AS draw_title
+                FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
+                WHERE d.tournament_id=? ORDER BY dm.id
+            """,(tournament_id,)).fetchall()
+            history=con.execute("SELECT * FROM tournament_audit WHERE tournament_id=? ORDER BY id DESC",(tournament_id,)).fetchall()
+            data=dict(t); data["draws"]=[dict(x) for x in draws]; data["matches"]=[]
+            for m in matches:
+                md=dict(m)
+                games=con.execute("SELECT game_number,side_a_score,side_b_score FROM match_games WHERE match_id=? ORDER BY game_number",(m["id"],)).fetchall()
+                md["games"]=[dict(x) for x in games]
+                data["matches"].append(md)
+            data["history"]=[dict(x) for x in history]
+        return jsonify(data)
+
+    @app.route("/api/tournaments/<int:tournament_id>", methods=["PUT"])
+    @require_auth
+    def update_tournament(tournament_id):
+        data=request.get_json(silent=True) or {}
+        allowed_status={"Draft","Draw Generated","Live","Completed","Archived"}
+        with db() as con:
+            t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+            if not t: return jsonify({"error":"Tournament not found"}),404
+            status=(data.get("status") or t["status"]).strip()
+            if status not in allowed_status: return jsonify({"error":"Invalid tournament status"}),400
+            now=now_iso()
+            con.execute("""UPDATE tournaments SET name=?,venue=?,start_date=?,end_date=?,status=?,description=?,updated_at=? WHERE id=?""",
+                        ((data.get("name") or t["name"]).strip(),(data.get("venue") if data.get("venue") is not None else t["venue"]) or "",
+                         (data.get("start_date") if data.get("start_date") is not None else t["start_date"]) or "",
+                         (data.get("end_date") if data.get("end_date") is not None else t["end_date"]) or "",
+                         status,(data.get("description") if data.get("description") is not None else t["description"]) or "",now,tournament_id))
+            con.execute("INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at) VALUES(?,?,?,?,?)",
+                        (tournament_id,g.current_user["username"],"TOURNAMENT_UPDATED",f"Status: {status}",now))
+            con.commit()
+            row=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+        return jsonify(dict(row))
+
+    @app.route("/api/tournaments/<int:tournament_id>/draw", methods=["POST"])
+    @require_auth
+    def tournament_draw(tournament_id):
+        data=request.get_json(silent=True) or {}
+        data["tournament_id"]=tournament_id
+        return random_draw_impl(data)
+
+    @app.route("/api/matches/<int:match_id>", methods=["GET"])
+    @require_auth
+    def get_match(match_id):
+        with db() as con:
+            m=con.execute("""
+                SELECT dm.*,d.tournament_id,d.event_name,d.round_name,d.title AS draw_title,t.name AS tournament_name,t.tournament_code
+                FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
+                LEFT JOIN tournaments t ON t.id=d.tournament_id WHERE dm.id=?
+            """,(match_id,)).fetchone()
+            if not m:return jsonify({"error":"Match not found"}),404
+            data=dict(m)
+            data["games"]=[dict(x) for x in con.execute("SELECT game_number,side_a_score,side_b_score FROM match_games WHERE match_id=? ORDER BY game_number",(match_id,)).fetchall()]
+        return jsonify(data)
+
+    @app.route("/api/matches/<int:match_id>/result", methods=["POST"])
+    @require_auth
+    def record_match_result(match_id):
+        data=request.get_json(silent=True) or {}
+        raw_games=data.get("games") or []
+        if not isinstance(raw_games,list) or not raw_games: return jsonify({"error":"At least one game score is required"}),400
+        games=[]
+        for i,gme in enumerate(raw_games,1):
+            a=nullable_int(gme.get("side_a_score")); b=nullable_int(gme.get("side_b_score"))
+            if a is None or b is None or a<0 or b<0: return jsonify({"error":f"Invalid score for game {i}"}),400
+            games.append((i,a,b))
+        a_wins=sum(1 for _,a,b in games if a>b); b_wins=sum(1 for _,a,b in games if b>a)
+        if a_wins==b_wins: return jsonify({"error":"The games do not determine a winner."}),400
+        winner_side="A" if a_wins>b_wins else "B"
+        now=now_iso()
+        with db() as con:
+            m=con.execute("SELECT dm.*,d.tournament_id,d.event_name,d.round_name,d.title,t.name AS tournament_name FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id LEFT JOIN tournaments t ON t.id=d.tournament_id WHERE dm.id=?",(match_id,)).fetchone()
+            if not m:return jsonify({"error":"Match not found"}),404
+            previous=con.execute("SELECT game_number,side_a_score,side_b_score FROM match_games WHERE match_id=? ORDER BY game_number",(match_id,)).fetchall()
+            con.execute("DELETE FROM match_games WHERE match_id=?",(match_id,))
+            for n,a,b in games:
+                con.execute("INSERT INTO match_games(match_id,game_number,side_a_score,side_b_score,created_at,updated_at) VALUES(?,?,?,?,?,?)",(match_id,n,a,b,now,now))
+            winner=m["side_a"] if winner_side=="A" else m["side_b"]
+            con.execute("""UPDATE draw_matches SET winner=?,status='Completed',result_entered_by=?,result_entered_at=COALESCE(result_entered_at,?),result_updated_at=? WHERE id=?""",
+                        (winner,g.current_user["username"],now,now,match_id))
+            action="RESULT_UPDATED" if previous else "RESULT_RECORDED"
+            detail=json.dumps({"previous":[dict(x) for x in previous],"games":[{"game":n,"a":a,"b":b} for n,a,b in games],"winner":winner},separators=(",",":"))
+            con.execute("INSERT INTO tournament_audit(tournament_id,match_id,actor,action,details,created_at) VALUES(?,?,?,?,?,?)",
+                        (m["tournament_id"],match_id,g.current_user["username"],action,detail,now))
+            con.execute("INSERT INTO audit_logs(actor,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
+                        (g.current_user["username"],action,"draw_matches",match_id,f"{m['side_a']} vs {m['side_b']} -> {winner}",now))
+            if m["tournament_id"]:
+                pending=con.execute("""SELECT COUNT(*) FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? AND dm.status!='Completed' AND dm.side_b!='Bye'""",(m["tournament_id"],)).fetchone()[0]
+                if pending==0:
+                    con.execute("UPDATE tournaments SET status='Completed',updated_at=? WHERE id=?",(now,m["tournament_id"]))
+                else:
+                    con.execute("UPDATE tournaments SET status='Live',updated_at=? WHERE id=?",(now,m["tournament_id"]))
+            con.commit()
+            result={"match_id":match_id,"winner":winner,"games":[{"game_number":n,"side_a_score":a,"side_b_score":b} for n,a,b in games],"games_won":{"side_a":a_wins,"side_b":b_wins},"status":"Completed","recorded_by":g.current_user["username"],"recorded_at":now}
+        return jsonify(result)
+
+    @app.route("/api/tournaments/<int:tournament_id>/scoresheets.pdf")
+    @require_auth
+    def export_tournament_scoresheets(tournament_id):
+        with db() as con:
+            t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+            if not t:return jsonify({"error":"Tournament not found"}),404
+            matches=con.execute("""SELECT dm.*,d.tournament_id,d.event_name,d.round_name FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? ORDER BY dm.id""",(tournament_id,)).fetchall()
+            payload=dict(t); payload["matches"]=[dict(m) for m in matches]
+        return Response(build_scoresheets_pdf(payload),mimetype="application/pdf",headers={"Content-Disposition":f"attachment; filename={safe_filename(t['name'])}_scoresheets.pdf"})
+
+    @app.route("/api/tournaments/<int:tournament_id>/export.xlsx")
+    @require_auth
+    def export_tournament_xlsx(tournament_id):
+        with db() as con:
+            t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+            if not t:return jsonify({"error":"Tournament not found"}),404
+            rows=con.execute("""SELECT dm.*,d.event_name,d.round_name,d.title AS draw_title FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? ORDER BY dm.id""",(tournament_id,)).fetchall()
+        wb=Workbook(); ws=wb.active; ws.title="Tournament"
+        ws.append(["Tournament Code","Tournament","Venue","Start Date","End Date","Status"]); ws.append([t["tournament_code"],t["name"],t["venue"],t["start_date"],t["end_date"],t["status"]])
+        for c in ws[1]: c.font=Font(bold=True,color="FFFFFF"); c.fill=PatternFill("solid",fgColor="0F766E")
+        ms=wb.create_sheet("Match Results"); ms.append(["Match ID","Event","Round","Player A","Player B","Status","Winner","Recorded By","Recorded At","Game 1","Game 2","Game 3"])
+        for c in ms[1]: c.font=Font(bold=True,color="FFFFFF"); c.fill=PatternFill("solid",fgColor="0F766E")
+        with db() as con:
+            for m in rows:
+                games=con.execute("SELECT game_number,side_a_score,side_b_score FROM match_games WHERE match_id=? ORDER BY game_number",(m["id"],)).fetchall()
+                vals=[f"{t['tournament_code']}-{m['id']:04d}",m["event_name"] or "",m["round_name"] or "",m["side_a"],m["side_b"],m["status"],m["winner"] or "",m["result_entered_by"] or "",m["result_updated_at"] or ""]
+                vals += [f"{g['side_a_score']}-{g['side_b_score']}" for g in games[:3]]
+                ms.append(vals)
+        buf=io.BytesIO(); wb.save(buf); buf.seek(0)
+        return Response(buf.getvalue(),mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",headers={"Content-Disposition":f"attachment; filename={safe_filename(t['name'])}_tournament.xlsx"})
 
     @app.route("/api/draws/<int:draw_id>", methods=["DELETE"])
     @require_auth
@@ -799,7 +972,34 @@ def now_iso():
 def ensure_database():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with db() as con:
-        con.executescript("""
+        con.executescript("""        # Backward-compatible columns for existing draw records.
+        for column, definition in [
+            ("tournament_id", "INTEGER"),
+            ("event_name", "TEXT"),
+            ("round_name", "TEXT"),
+            ("match_code", "TEXT"),
+            ("court", "TEXT"),
+            ("result_entered_by", "TEXT"),
+            ("result_entered_at", "TEXT"),
+            ("result_updated_at", "TEXT"),
+        ]:
+            try:
+                con.execute(f"ALTER TABLE draws ADD COLUMN {column} {definition}")
+            except sqlite3.OperationalError:
+                pass
+        for column, definition in [
+            ("match_code", "TEXT"),
+            ("court", "TEXT"),
+            ("result_entered_by", "TEXT"),
+            ("result_entered_at", "TEXT"),
+            ("result_updated_at", "TEXT"),
+        ]:
+            try:
+                con.execute(f"ALTER TABLE draw_matches ADD COLUMN {column} {definition}")
+            except sqlite3.OperationalError:
+                pass
+
+
         CREATE TABLE IF NOT EXISTS players (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             source_ranking_id INTEGER,
@@ -818,6 +1018,41 @@ def ensure_database():
             notes TEXT,
             created_at TEXT,
             updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS tournaments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tournament_code TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            venue TEXT,
+            start_date TEXT,
+            end_date TEXT,
+            status TEXT NOT NULL DEFAULT 'Draft',
+            description TEXT,
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS match_games (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id INTEGER NOT NULL,
+            game_number INTEGER NOT NULL,
+            side_a_score INTEGER,
+            side_b_score INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(match_id, game_number),
+            FOREIGN KEY(match_id) REFERENCES draw_matches(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS tournament_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tournament_id INTEGER NOT NULL,
+            match_id INTEGER,
+            actor TEXT,
+            action TEXT NOT NULL,
+            details TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+            FOREIGN KEY(match_id) REFERENCES draw_matches(id) ON DELETE SET NULL
         );
         CREATE TABLE IF NOT EXISTS draws (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -880,6 +1115,9 @@ def ensure_database():
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_email_tokens_hash ON email_tokens(token_hash);
+        CREATE INDEX IF NOT EXISTS idx_match_games_match ON match_games(match_id);
+        CREATE INDEX IF NOT EXISTS idx_tournament_audit_tournament ON tournament_audit(tournament_id);
+
         """)
         admin = con.execute("SELECT id FROM users WHERE username=?", (ADMIN_USERNAME,)).fetchone()
         if not admin and ADMIN_PASSWORD:
@@ -1033,6 +1271,30 @@ def safe_filename(name):
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_")
     return cleaned or "lba_draw.pdf"
 
+
+def build_scoresheets_pdf(tournament):
+    buffer=io.BytesIO()
+    doc=SimpleDocTemplate(buffer,pagesize=A4,rightMargin=14*mm,leftMargin=14*mm,topMargin=12*mm,bottomMargin=12*mm,title=f"{tournament.get('name','LBA Tournament')} Scoresheets")
+    styles=getSampleStyleSheet(); title=styles["Title"]; title.fontName="Helvetica-Bold"; title.fontSize=16
+    normal=styles["BodyText"]; normal.fontSize=9; normal.leading=12
+    story=[]
+    for index,m in enumerate(tournament.get("matches") or []):
+        if index:
+            from reportlab.platypus import PageBreak
+            story.append(PageBreak())
+        if LOGO_PATH.exists():
+            try: story.append(Image(str(LOGO_PATH),width=22*mm,height=22*mm))
+            except Exception: pass
+        story += [Paragraph("Lesotho Badminton Association",title),Paragraph("Official Match Scoresheet",styles["Heading2"]),Spacer(1,4*mm)]
+        meta=[[ "Tournament",tournament.get("name","-") ],["Event",m.get("event_name") or "-"],["Round",m.get("round_name") or "-"],["Match ID",m.get("match_code") or f"{tournament.get('tournament_code','LBA')}-{m.get('id')}"],["Court",m.get("court") or "________"]]
+        tab=Table(meta,colWidths=[35*mm,145*mm]); tab.setStyle(TableStyle([("BACKGROUND",(0,0),(0,-1),colors.HexColor("#f1f5f9")),("FONTNAME",(0,0),(0,-1),"Helvetica-Bold"),("BOX",(0,0),(-1,-1),.7,colors.HexColor("#cbd5e1")),("INNERGRID",(0,0),(-1,-1),.4,colors.HexColor("#e2e8f0")),("PADDING",(0,0),(-1,-1),6)])); story.append(tab); story.append(Spacer(1,6*mm))
+        players=Table([["PLAYER A","PLAYER B"],[m.get("side_a") or "-",m.get("side_b") or "-"]],colWidths=[90*mm,90*mm])
+        players.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#0f172a")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("ALIGN",(0,0),(-1,-1),"CENTER"),("BOX",(0,0),(-1,-1),.7,colors.HexColor("#cbd5e1")),("INNERGRID",(0,0),(-1,-1),.4,colors.HexColor("#e2e8f0")),("PADDING",(0,0),(-1,-1),9)])); story.append(players); story.append(Spacer(1,7*mm))
+        score=Table([["Game","Player A","Player B"]]+[[str(i),"________","________"] for i in range(1,4)],colWidths=[30*mm,75*mm,75*mm])
+        score.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#047857")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("ALIGN",(0,0),(-1,-1),"CENTER"),("BOX",(0,0),(-1,-1),.7,colors.HexColor("#cbd5e1")),("INNERGRID",(0,0),(-1,-1),.4,colors.HexColor("#e2e8f0")),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#f8fafc")]),("PADDING",(0,0),(-1,-1),9)])); story.append(score); story.append(Spacer(1,8*mm))
+        sig=Table([["Winner:","____________________________"],["Official:","____________________________"],["Signature:","____________________________"],["Date:","____________________________"]],colWidths=[35*mm,145*mm]); sig.setStyle(TableStyle([("FONTNAME",(0,0),(0,-1),"Helvetica-Bold"),("BOX",(0,0),(-1,-1),.7,colors.HexColor("#cbd5e1")),("INNERGRID",(0,0),(-1,-1),.4,colors.HexColor("#e2e8f0")),("PADDING",(0,0),(-1,-1),7)])); story.append(sig)
+        story.append(Spacer(1,7*mm)); story.append(Paragraph("Keep this sheet with the official tournament records. The Match ID links this paper record to the digital result.",normal))
+    doc.build(story); buffer.seek(0); return buffer.getvalue()
 
 def build_draw_pdf(draw):
     buffer = io.BytesIO()
