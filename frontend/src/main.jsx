@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users, Home, Menu, X, Sun, Moon, ShieldCheck } from 'lucide-react';
+import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users, Home, Menu, X, Sun, Moon, ShieldCheck, CalendarDays, CheckCircle2, ClipboardList } from 'lucide-react';
 import './style.css';
 import logo from './assets/lba-logo.png';
 
@@ -80,6 +80,7 @@ function App() {
   const [dashboard, setDashboard] = useState(null);
   const [players, setPlayers] = useState([]);
   const [draws, setDraws] = useState([]);
+  const [tournaments, setTournaments] = useState([]);
   const [form, setForm] = useState(emptyForm());
   const [filters, setFilters] = useState({ q: '', category: 'All', status: 'All' });
   const [pointInputs, setPointInputs] = useState({});
@@ -89,14 +90,16 @@ function App() {
     if (!getToken()) return;
     const params = new URLSearchParams(filters).toString();
     try {
-      const [dashboardData, playerData, drawData] = await Promise.all([
+      const [dashboardData, playerData, drawData, tournamentData] = await Promise.all([
         api('/dashboard'),
         api(`/players?${params}`),
-        api('/draws')
+        api('/draws'),
+        api('/tournaments')
       ]);
       setDashboard(dashboardData);
       setPlayers(playerData);
       setDraws(drawData);
+      setTournaments(tournamentData);
     } catch (err) {
       if (err.status === 401) { sessionStorage.removeItem('lba_token'); sessionStorage.removeItem('lba_user'); setToken(''); setCurrentUser(null); setMessage('Your session has expired. Please sign in again.'); } else setMessage(err.message);
     }
@@ -352,7 +355,7 @@ function App() {
       <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
         <div className="brand"><img src={logo} alt="Lesotho Badminton Association logo" className="brand-logo" /><div><h1>Badminton Admin</h1><p>Lesotho Badminton Association</p></div><button className="close-menu" onClick={() => setMenuOpen(false)}><X size={20}/></button></div>
         {[
-          ['home','Overview',Home],['records','Records',Users],['draws','Draws',Shuffle],['reports','Reports',Trophy]
+          ['home','Overview',Home],['records','Records',Users],['draws','Draws',Shuffle],['tournaments','Tournaments',Trophy],['reports','Reports',Trophy]
         ].map(([id,label,Icon]) => <button key={id} className={activeTab === id ? 'nav active' : 'nav'} onClick={() => {setActiveTab(id);setMenuOpen(false);}}><Icon size={18}/><span>{label}</span></button>)}
         <button className="nav" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}<span>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span></button>
         <button className="logout" onClick={logout}><Lock size={17}/> Sign out</button>
@@ -380,9 +383,10 @@ function App() {
         <div className="message">{message}</div>
         {activeTab === 'records' && <Records players={players} form={form} setForm={setForm} savePlayer={savePlayer} deletePlayer={deletePlayer} filters={filters} setFilters={setFilters} categoryOptions={categoryOptions} loadAll={loadAll} pointInputs={pointInputs} setPointInputs={setPointInputs} addPoints={addPoints} />}
         {activeTab === 'draws' && <Draws draws={draws} drawForm={drawForm} setDrawForm={setDrawForm} generateDraw={generateDraw} categoryOptions={categoryOptions} drawCandidates={drawCandidates} />}
+        {activeTab === 'tournaments' && <TournamentScreen tournaments={tournaments} players={players} categoryOptions={categoryOptions} refresh={loadAll} setMessage={setMessage} />}
         {activeTab === 'reports' && <Reports />}
       </main>
-      <nav className="mobile-nav">{[["home","Home",Home],["records","Players",Users],["draws","Draws",Shuffle],["reports","Reports",Trophy]].map(([id,label,Icon])=><button key={id} className={activeTab===id?"active":""} onClick={()=>setActiveTab(id)}><Icon size={19}/><span>{label}</span></button>)}</nav>
+      <nav className="mobile-nav">{[["home","Home",Home],["records","Players",Users],["draws","Draws",Shuffle],["tournaments","Tournaments",Trophy],["reports","Reports",Trophy]].map(([id,label,Icon])=><button key={id} className={activeTab===id?"active":""} onClick={()=>setActiveTab(id)}><Icon size={19}/><span>{label}</span></button>)}</nav>
     </div>
     {booting && <BootSplash />}
     </>
