@@ -637,7 +637,7 @@ def create_app():
                 con.execute("INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at) VALUES(?,?,?,?,?)",
                             (tournament_id,g.current_user["username"],"DRAW_GENERATED",f"{round_name}: {len(players)} participant(s), {len(fixtures)} match(es)",now))
             con.execute("INSERT INTO audit_logs(actor,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
-                        (g.current_user["username'],"GENERATE_DRAW","draws",draw_id,f"{title}: {len(players)} selected participant(s), {len(fixtures)} match(es)",now))
+                        (g.current_user["username"],"GENERATE_DRAW","draws",draw_id,f"{title}: {len(players)} selected participant(s), {len(fixtures)} match(es)",now))
             con.commit(); draw=get_draw(con,draw_id); draw["selected_player_count"]=len(players)
         return jsonify(draw),201
 
