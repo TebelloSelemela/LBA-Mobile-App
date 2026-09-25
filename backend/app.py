@@ -872,7 +872,6 @@ def create_app():
                 con.execute("""INSERT INTO draw_matches(draw_id,match_no,side_a,side_b,side_a_player_ids,side_b_player_ids,status,match_code)
                                VALUES(?,?,?,?,?,?,?,?)""",
                             (draw_id,3,a["name"],b["name"],a["ids"],b["ids"],"Pending",code))
-                con.execute("UPDATE draws SET stage='Final + Third Place',round_name='Final + Third Place' WHERE id=?",(draw_id,))
 
             con.execute("UPDATE tournaments SET status='Live',updated_at=? WHERE id=?",(now,tournament_id))
             con.execute("INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at) VALUES(?,?,?,?,?)",
@@ -907,6 +906,8 @@ def create_app():
             # its loser is treated as third place when no bronze match exists.
             third_name=third["winner"] if third else None
             if not third_name:
+                # Small brackets (3-6 entrants) can have a single real semifinal.
+                # In that case the semifinal loser is the third-place finisher.
                 semis=con.execute("""
                     SELECT dm.* FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
                     WHERE d.tournament_id=? AND d.stage='Semifinal' AND dm.status='Completed' AND dm.side_b!='Bye'
@@ -914,6 +915,18 @@ def create_app():
                 """,(tournament_id,)).fetchall()
                 if len(semis)==1:
                     s=semis[0]
+                    third_name=s["side_b"] if s["winner"]==s["side_a"] else s["side_a"]
+            if not third_name:
+                # For a three-player bracket, the only real first-round match
+                # produces the third-place finisher.
+                early=con.execute("""
+                    SELECT dm.* FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
+                    WHERE d.tournament_id=? AND d.stage NOT IN ('Final','Semifinal')
+                      AND dm.status='Completed' AND dm.side_b!='Bye'
+                    ORDER BY d.round_number DESC,dm.id
+                """,(tournament_id,)).fetchall()
+                if len(early)==1:
+                    s=early[0]
                     third_name=s["side_b"] if s["winner"]==s["side_a"] else s["side_a"]
 
             runner=final["side_b"] if final["winner"]==final["side_a"] else final["side_a"]
