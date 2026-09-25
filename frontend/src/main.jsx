@@ -9,8 +9,12 @@ import logo from './assets/lba-logo.png';
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:5050/api';
 
 function getToken() {
-  return localStorage.getItem('lba_token') || '';
+  return sessionStorage.getItem('lba_token') || '';
 }
+
+// Authentication is intentionally session-only. A fresh app session must require login.
+localStorage.removeItem('lba_token');
+localStorage.removeItem('lba_user');
 
 async function saveBlob(blob, filename) {
   if (window.Capacitor?.isNativePlatform?.()) {
@@ -61,7 +65,7 @@ function emptyForm() {
 
 function App() {
   const [token, setToken] = useState(getToken());
-  const [currentUser, setCurrentUser] = useState(() => { try { return JSON.parse(localStorage.getItem('lba_user') || 'null'); } catch { return null; } });
+  const [currentUser, setCurrentUser] = useState(() => { try { return JSON.parse(sessionStorage.getItem('lba_user') || 'null'); } catch { return null; } });
   const [activeTab, setActiveTab] = useState('home');
   const [theme, setTheme] = useState(localStorage.getItem('lba_theme') || 'dark');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -94,7 +98,7 @@ function App() {
       setPlayers(playerData);
       setDraws(drawData);
     } catch (err) {
-      if (err.status === 401) { localStorage.removeItem('lba_token'); localStorage.removeItem('lba_user'); setToken(''); setCurrentUser(null); setMessage('Your session has expired. Please sign in again.'); } else setMessage(err.message);
+      if (err.status === 401) { sessionStorage.removeItem('lba_token'); sessionStorage.removeItem('lba_user'); setToken(''); setCurrentUser(null); setMessage('Your session has expired. Please sign in again.'); } else setMessage(err.message);
     }
   }
 
@@ -119,8 +123,8 @@ function App() {
     e.preventDefault();
     try {
       const data = await api('/auth/login', { method: 'POST', body: JSON.stringify(login) });
-      localStorage.setItem('lba_token', data.token);
-      localStorage.setItem('lba_user', JSON.stringify(data.user));
+      sessionStorage.setItem('lba_token', data.token);
+      sessionStorage.setItem('lba_user', JSON.stringify(data.user));
       setToken(data.token);
       setCurrentUser(data.user);
       setMessage(`Welcome, ${data.user.full_name}.`);
