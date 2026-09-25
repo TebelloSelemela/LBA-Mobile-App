@@ -719,10 +719,20 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   }
 
   function startResult(m) {
+    setResultDirty(false);
     setOpenResult(m.id);
     const old = m.games || [];
     setGames([0,1,2].map(i => ({a: old[i] ? old[i].side_a_score : '', b: old[i] ? old[i].side_b_score : ''})));
   }
+
+  useEffect(() => {
+    if (!openResult) {
+      setResultDirty(false);
+      return;
+    }
+    const hasTypedScore = games.some(g => String(g.a ?? '').trim() !== '' || String(g.b ?? '').trim() !== '');
+    setResultDirty(hasTypedScore);
+  }, [games, openResult]);
 
   async function saveResult(matchId) {
     const used = games
@@ -943,8 +953,8 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
                     <b>Enter game scores — best of 3</b>
                     {games.map((g,i)=><div className="grid two" key={i}><Input label={'Game '+(i+1)+' · Player A'} type="number" value={g.a} onChange={v=>{setResultDirty(true);setGames(gs=>gs.map((x,j)=>j===i?{...x,a:v}:x))}}/><Input label={'Game '+(i+1)+' · Player B'} type="number" value={g.b} onChange={v=>{setResultDirty(true);setGames(gs=>gs.map((x,j)=>j===i?{...x,b:v}:x))}}/></div>)}
                     <small className="helper">Badminton scoring: 21-point games, win by 2 after 20-all, with 30 as the maximum.</small>
-                    <button className={resultDirty ? "button result-save-button" : "button"} onClick={()=>saveResult(m.id)} disabled={busy || !resultDirty}>
-                      {busy ? 'Saving Results…' : resultDirty ? 'Save Results' : 'Record Results'}
+                    <button type="button" className={resultDirty ? "button result-save-button" : "button"} onClick={()=>saveResult(m.id)} disabled={busy || !resultDirty}>
+                      {busy ? 'Saving…' : resultDirty ? 'Save' : 'Record Results'}
                     </button>
                   </div>}
                 </div>;
