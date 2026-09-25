@@ -591,6 +591,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const [openResult, setOpenResult] = useState(null);
   const [games, setGames] = useState([{a:'',b:''},{a:'',b:''},{a:'',b:''}]);
   const [busy, setBusy] = useState(false);
+  const [historyDetails, setHistoryDetails] = useState({});
 
   async function load(id=selectedId) {
     if (!id) { setDetail(null); return null; }
@@ -605,6 +606,28 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   }
 
   useEffect(() => { if (selectedId) load(selectedId); }, [selectedId]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const completed = tournaments.filter(t => t.status === 'Completed');
+      const entries = await Promise.all(completed.map(async t => {
+        try {
+          const d = await api('/tournaments/'+t.id);
+          return [t.id, d];
+        } catch (_) {
+          return [t.id, null];
+        }
+      }));
+      if (!cancelled) {
+        setHistoryDetails(prev => {
+          const next = {...prev};
+          entries.forEach(([id,d]) => { if (d) next[id]=d; });
+          return next;
+        });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tournaments]);
 
   const candidates = useMemo(
     () => players.filter(p => p.status === 'Active' && (draw.category_code === 'All' || p.category_code === draw.category_code)),
@@ -819,6 +842,28 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           </button>
         )}
         {!tournaments.length&&<div className="empty">No tournaments yet.</div>}
+      </div>
+
+      <div className="tournament-history-summary">
+        <div className="history-heading">
+          <span className="eyebrow">ARCHIVE</span>
+          <h3>Tournament History</h3>
+        </div>
+        {tournaments.filter(t => t.status === 'Completed').map(t => {
+          const h=historyDetails[t.id];
+          const p=h?.podium || {};
+          const thirdPlayers=p.third_players || (p.third ? [p.third] : []);
+          return <button className="history-card" key={'history-card-'+t.id} onClick={()=>setSelectedId(t.id)}>
+            <div className="history-card-title"><b>{t.name}</b><span>{t.venue || 'Venue not recorded'}</span></div>
+            <div className="history-card-grid">
+              <div><small>1st Place</small><strong>{p.first || '—'}</strong></div>
+              <div><small>2nd Place</small><strong>{p.second || '—'}</strong></div>
+              <div><small>3rd Place</small><strong>{thirdPlayers.length ? thirdPlayers.join(' & ') : '—'}</strong></div>
+              <div><small>Date</small><strong>{t.start_date || (h?.finished_at ? formatLbaTime(h.finished_at).split(',')[0] : '—')}</strong></div>
+            </div>
+          </button>;
+        })}
+        {!tournaments.some(t => t.status === 'Completed') && <div className="empty small">Completed tournaments will appear here.</div>}
       </div>
     </div>
 
