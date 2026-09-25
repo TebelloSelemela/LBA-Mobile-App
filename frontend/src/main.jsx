@@ -878,8 +878,87 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           {finalMatch?.status === 'Completed' && thirdMatch?.status !== 'Completed' && <div className="message">Final recorded. Complete the third-place match before declaring the tournament finished.</div>}
           {detail.status === 'Completed' && <div className="message">This tournament is officially closed. The podium and complete history are preserved below.</div>}
 
-          <h3>Full Tournament History</h3>
-          <div className="audit-list">{(detail.history || []).map(h=><div className="audit-row" key={h.id}><b>{h.action.replaceAll('_',' ')}</b><small>{formatLbaTime(h.created_at)} · {h.actor}</small><span>{h.details}</span></div>)}{!detail.history?.length&&<div className="empty small">No tournament history yet.</div>}</div>
+          <section className="tournament-round-history">
+            <div className="history-heading">
+              <div>
+                <span className="eyebrow">COMPLETE TOURNAMENT RECORD</span>
+                <h3>Round-by-Round Matches</h3>
+                <p>Every round is kept separately. Winners shown in one round are the players used to create the following round.</p>
+              </div>
+            </div>
+
+            {rounds.map(round => {
+              const completed=round.matches.filter(m=>m.status==='Completed');
+              const winners=completed.filter(m=>m.winner && m.winner!=='Bye').map(m=>m.winner);
+              return <section className="history-round" key={'history-'+round.number}>
+                <div className="history-round-head">
+                  <div>
+                    <span className="eyebrow">ROUND {round.number}</span>
+                    <h4>{round.stage}</h4>
+                  </div>
+                  <span className={completed.length===round.matches.length ? 'badge green' : 'badge'}>
+                    {completed.length}/{round.matches.length} matches complete
+                  </span>
+                </div>
+
+                <div className="history-match-list">
+                  {round.matches.map(m => {
+                    const isThird=m.stage==='Final' && m.match_no===3;
+                    const score=m.games?.length ? m.games.map(g=>g.side_a_score+'-'+g.side_b_score).join(' · ') : 'BYE';
+                    return <div className="history-match" key={'history-match-'+m.id}>
+                      <div className="history-match-code">{m.match_code || 'Match '+m.match_no}</div>
+                      <div className="history-players">
+                        <b>{m.side_a}</b>
+                        <span>VS</span>
+                        <b>{m.side_b}</b>
+                      </div>
+                      <div className="history-match-meta">
+                        <span>{isThird ? '3rd Place Match' : (m.stage || round.stage)}</span>
+                        <span>{m.court ? 'Court '+m.court : 'Court not assigned'}</span>
+                        <span>{m.status === 'Completed' ? score : 'Pending'}</span>
+                      </div>
+                      {m.status==='Completed' && <div className="history-winner"><CheckCircle2 size={14}/> Winner: <b>{m.winner}</b>{m.result_updated_at ? ' · '+formatLbaTime(m.result_updated_at) : ''}</div>}
+                    </div>;
+                  })}
+                </div>
+
+                {winners.length>0 && <div className="advancing-box">
+                  <b>Winners advancing from Round {round.number}</b>
+                  <div>{winners.map((name,i)=><span key={name+i}>{name}</span>)}</div>
+                </div>}
+              </section>;
+            })}
+          </section>
+
+          <section className="audit-history">
+            <div className="history-heading">
+              <div>
+                <span className="eyebrow">SYSTEM RECORD</span>
+                <h3>Full Tournament History</h3>
+                <p>Administrative actions and result records, with all timestamps shown in Lesotho time.</p>
+              </div>
+            </div>
+            <div className="audit-list">
+              {(detail.history || []).map(h => {
+                let display=h.details || '';
+                try {
+                  const parsed=JSON.parse(display);
+                  if (parsed && parsed.games) {
+                    const scores=parsed.games.map(g=>'Game '+g.game+': '+g.a+'-'+g.b).join(' · ');
+                    display=(parsed.winner ? 'Winner: '+parsed.winner+' · ' : '')+scores;
+                  } else if (parsed && parsed.previous && parsed.games) {
+                    display='Winner: '+(parsed.winner || '—')+' · '+parsed.games.map(g=>'Game '+g.game+': '+g.a+'-'+g.b).join(' · ');
+                  }
+                } catch (_) {}
+                return <div className="audit-row" key={h.id}>
+                  <b>{h.action.replaceAll('_',' ')}</b>
+                  <small>{formatLbaTime(h.created_at)} · {h.actor}</small>
+                  <span>{display}</span>
+                </div>;
+              })}
+              {!detail.history?.length&&<div className="empty small">No tournament history yet.</div>}
+            </div>
+          </section>
         </div>}
       </>}
     </div>
