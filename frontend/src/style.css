@@ -215,3 +215,24 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   .history-players b:last-child{text-align:left}
   .history-players span{width:max-content}
 }
+
+
+/* Compact tournament archive */
+.tournament-history-summary{margin-top:18px;padding-top:18px;border-top:1px solid rgba(255,255,255,.08)}
+.history-card{display:block;width:100%;text-align:left;margin:10px 0;padding:15px;border:1px solid rgba(49,211,154,.18);border-radius:16px;background:rgba(4,18,29,.5);color:inherit;cursor:pointer}
+.history-card:hover{border-color:rgba(49,211,154,.45)}
+.history-card-title{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:13px}
+.history-card-title b{font-size:16px;color:#edf7ff}
+.history-card-title span{font-size:12px;color:#8fa5b5;text-align:right}
+.history-card-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.history-card-grid>div{padding:9px 10px;border-radius:10px;background:rgba(255,255,255,.035)}
+.history-card-grid small{display:block;color:#8fa5b5;font-size:10px;text-transform:uppercase;letter-spacing:.08em;font-weight:800;margin-bottom:4px}
+.history-card-grid strong{display:block;color:#eaf7f2;font-size:13px}
+:root[data-theme="light"] .tournament-history-summary{border-color:#dbe5ea}
+:root[data-theme="light"] .history-card{background:#f8fbfd;border-color:#cde9df}
+:root[data-theme="light"] .history-card-title b,
+:root[data-theme="light"] .history-card-grid strong{color:#142b3b}
+:root[data-theme="light"] .history-card-title span,
+:root[data-theme="light"] .history-card-grid small{color:#607588}
+:root[data-theme="light"] .history-card-grid>div{background:#fff}
+@media(max-width:700px){.history-card-title{flex-direction:column}.history-card-title span{text-align:left}.history-card-grid{grid-template-columns:1fr}}
