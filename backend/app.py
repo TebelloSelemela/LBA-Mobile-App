@@ -52,7 +52,7 @@ def create_app():
 
     @app.route("/api/health")
     def health():
-        return jsonify({"ok": True, "database": str(DB_PATH), "time": datetime.utcnow().isoformat() + "Z"})
+        return jsonify({"ok": True, "database": str(DB_PATH), "time": now_iso(), "timezone": "Africa/Maseru (SAST, UTC+02:00)"})
 
     @app.route("/api/auth/login", methods=["POST"])
     def login():
