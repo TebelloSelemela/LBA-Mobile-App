@@ -11,6 +11,7 @@ import json
 import urllib.request
 import urllib.error
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -593,10 +594,13 @@ def create_app():
         selected_ids = [pid for pid in selected_ids if pid is not None]
         tournament_id=nullable_int(data.get("tournament_id"))
         event_name=(data.get("event_name") or "").strip()
-        round_name=(data.get("round_name") or "").strip()
+        requested_round=(data.get("round_name") or "").strip()
         with db() as con:
             if tournament_id and not con.execute("SELECT id FROM tournaments WHERE id=?",(tournament_id,)).fetchone():
                 return jsonify({"error":"Tournament not found"}),404
+            if tournament_id:
+                existing=con.execute("SELECT id FROM draws WHERE tournament_id=?",(tournament_id,)).fetchone()
+                if existing:return jsonify({"error":"The first tournament draw already exists. Use 'Generate Next Round' after recording results."}),409
             if selected_ids:
                 placeholders=",".join("?" for _ in selected_ids)
                 players=[dict(row) for row in con.execute(f"SELECT * FROM players WHERE status='Active' AND id IN ({placeholders})",selected_ids).fetchall()]
@@ -605,27 +609,39 @@ def create_app():
                 args=[]; sql="SELECT * FROM players WHERE status='Active'"
                 if category and category!="All": sql+=" AND category_code=?"; args.append(category)
                 players=[dict(row) for row in con.execute(sql,args).fetchall()]
-            if not players:return jsonify({"error":"No active selected players found for this draw"}),400
+            if len(players)<2:return jsonify({"error":"Select at least two players for a knockout tournament."}),400
             if seed_by_rank: players.sort(key=lambda x:(x.get("rank_position") is None,x.get("rank_position") or 999999))
             else:
                 import random; random.shuffle(players)
+
+            slots=1
+            while slots < len(players): slots*=2
+            if len(players)==2: stage="Final"
+            else: stage={2:"Semifinal",4:"Quarterfinal",8:"Round of 16",16:"Round of 32",32:"Round of 64"}.get(slots,f"Round of {slots}")
+            round_name=stage
             fixtures=build_fixtures(players,draw_type); now=now_iso()
-            cur=con.execute("INSERT INTO draws(title,category_code,draw_type,created_at,tournament_id,event_name,round_name) VALUES(?,?,?,?,?,?,?)",
-                            (title,category,draw_type,now,tournament_id,event_name,round_name))
+            cur=con.execute("""INSERT INTO draws(title,category_code,draw_type,created_at,tournament_id,event_name,round_name,round_number,stage,created_by)
+                               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                            (title,category,draw_type,now,tournament_id,event_name,round_name,1,stage,g.current_user["username"]))
             draw_id=cur.lastrowid
             for fixture in fixtures:
                 code=f"{tournament_id and 'LBA' or 'DRAW'}-{tournament_id or draw_id:02d}-{draw_id:03d}-{fixture['match_no']:03d}"
-                con.execute("""INSERT INTO draw_matches(draw_id,match_no,side_a,side_b,side_a_player_ids,side_b_player_ids,status,match_code)
-                               VALUES(?,?,?,?,?,?,?,?)""",
-                            (draw_id,fixture["match_no"],fixture["side_a"],fixture["side_b"],fixture["side_a_player_ids"],fixture["side_b_player_ids"],"Pending",code))
+                is_bye=fixture["side_b"]=="Bye"
+                con.execute("""INSERT INTO draw_matches(draw_id,match_no,side_a,side_b,side_a_player_ids,side_b_player_ids,status,winner,match_code,result_entered_by,result_entered_at)
+                               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                            (draw_id,fixture["match_no"],fixture["side_a"],fixture["side_b"],fixture["side_a_player_ids"],fixture["side_b_player_ids"],
+                             "Completed" if is_bye else "Pending",fixture["side_a"] if is_bye else None,code,
+                             "SYSTEM" if is_bye else None,now if is_bye else None))
             if tournament_id:
                 con.execute("UPDATE tournaments SET status='Draw Generated',updated_at=? WHERE id=?",(now,tournament_id))
                 con.execute("INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at) VALUES(?,?,?,?,?)",
-                            (tournament_id,g.current_user["username"],"DRAW_GENERATED",f"{title}: {len(fixtures)} match(es)",now))
+                            (tournament_id,g.current_user["username"],"DRAW_GENERATED",f"{round_name}: {len(players)} participant(s), {len(fixtures)} match(es)",now))
             con.execute("INSERT INTO audit_logs(actor,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
-                        (g.current_user["username"],"GENERATE_DRAW","draws",draw_id,f"{title}: {len(players)} selected participant(s), {len(fixtures)} match(es)",now))
+                        (g.current_user["username'],"GENERATE_DRAW","draws",draw_id,f"{title}: {len(players)} selected participant(s), {len(fixtures)} match(es)",now))
             con.commit(); draw=get_draw(con,draw_id); draw["selected_player_count"]=len(players)
         return jsonify(draw),201
+
+
 
     @app.route("/api/draws")
     @require_auth
@@ -686,7 +702,7 @@ def create_app():
         code=(data.get("tournament_code") or "").strip().upper()
         if not code:
             base=re.sub(r"[^A-Z0-9]+","-",name.upper()).strip("-")
-            code=f"{base[:24] or 'LBA-TOURNAMENT'}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')[-6:]}"
+            code=f"{base[:24] or 'LBA-TOURNAMENT'}-{datetime.now(ZoneInfo('Africa/Maseru')).strftime('%Y%m%d%H%M%S')[-6:]}"
         now=now_iso()
         with db() as con:
             try:
@@ -694,8 +710,8 @@ def create_app():
                     INSERT INTO tournaments(tournament_code,name,venue,start_date,end_date,status,description,created_by,created_at,updated_at)
                     VALUES(?,?,?,?,?,?,?,?,?,?)
                 """,(code,name,(data.get("venue") or "").strip(),(data.get("start_date") or "").strip(),
-                    (data.get("end_date") or "").strip(),(data.get("status") or "Draft").strip(),
-                    (data.get("description") or "").strip(),g.current_user["username"],now,now))
+                    (data.get("end_date") or "").strip(),"Draft",(data.get("description") or "").strip(),
+                    g.current_user["username"],now,now))
             except sqlite3.IntegrityError:
                 return jsonify({"error":"Tournament code already exists"}),409
             tid=cur.lastrowid
@@ -711,19 +727,46 @@ def create_app():
         with db() as con:
             t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
             if not t: return jsonify({"error":"Tournament not found"}),404
-            draws=con.execute("SELECT * FROM draws WHERE tournament_id=? ORDER BY id DESC",(tournament_id,)).fetchall()
+            draws=con.execute("""
+                SELECT * FROM draws
+                WHERE tournament_id=?
+                ORDER BY round_number, id
+            """,(tournament_id,)).fetchall()
             matches=con.execute("""
-                SELECT dm.*, d.event_name, d.round_name AS draw_round, d.title AS draw_title
+                SELECT dm.*, d.event_name, d.round_name AS draw_round, d.title AS draw_title,
+                       d.round_number, d.stage
                 FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
-                WHERE d.tournament_id=? ORDER BY dm.id
+                WHERE d.tournament_id=?
+                ORDER BY d.round_number, dm.match_no, dm.id
             """,(tournament_id,)).fetchall()
             history=con.execute("SELECT * FROM tournament_audit WHERE tournament_id=? ORDER BY id DESC",(tournament_id,)).fetchall()
-            data=dict(t); data["draws"]=[dict(x) for x in draws]; data["matches"]=[]
+            data=dict(t)
+            data["draws"]=[dict(x) for x in draws]
+            data["matches"]=[]
             for m in matches:
                 md=dict(m)
                 games=con.execute("SELECT game_number,side_a_score,side_b_score FROM match_games WHERE match_id=? ORDER BY game_number",(m["id"],)).fetchall()
                 md["games"]=[dict(x) for x in games]
                 data["matches"].append(md)
+
+            # Podium is computed from recorded knockout results and is also
+            # persisted when the administrator declares the tournament finished.
+            final=next((m for m in data["matches"] if m.get("stage")=="Final" and m.get("status")=="Completed"),None)
+            third=next((m for m in data["matches"] if m.get("stage")=="Third Place" and m.get("status")=="Completed"),None)
+            podium={"first":data.get("winner_name"),"second":data.get("runner_up_name"),"third":data.get("third_place_name")}
+            if final:
+                podium["first"]=final.get("winner")
+                podium["second"]=final.get("side_b") if final.get("winner")==final.get("side_a") else final.get("side_a")
+            if third:
+                podium["third"]=third.get("winner")
+            elif not podium["third"]:
+                semis=[m for m in data["matches"] if m.get("stage")=="Semifinal" and m.get("status")=="Completed" and m.get("side_b")!="Bye"]
+                if len(semis)==1:
+                    s=semis[0]
+                    podium["third"]=s.get("side_b") if s.get("winner")==s.get("side_a") else s.get("side_a")
+            data["podium"]=podium
+            data["server_time"]=now_iso()
+            data["timezone"]="Africa/Maseru (SAST, UTC+02:00)"
             data["history"]=[dict(x) for x in history]
         return jsonify(data)
 
@@ -731,11 +774,11 @@ def create_app():
     @require_auth
     def update_tournament(tournament_id):
         data=request.get_json(silent=True) or {}
-        allowed_status={"Draft","Draw Generated","Live","Completed","Archived"}
         with db() as con:
             t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
             if not t: return jsonify({"error":"Tournament not found"}),404
             status=(data.get("status") or t["status"]).strip()
+            allowed_status={"Draft","Draw Generated","Live","Ready to Finish","Completed","Archived"}
             if status not in allowed_status: return jsonify({"error":"Invalid tournament status"}),400
             now=now_iso()
             con.execute("""UPDATE tournaments SET name=?,venue=?,start_date=?,end_date=?,status=?,description=?,updated_at=? WHERE id=?""",
@@ -756,6 +799,135 @@ def create_app():
         data["tournament_id"]=tournament_id
         return random_draw_impl(data)
 
+    @app.route("/api/tournaments/<int:tournament_id>/next-round", methods=["POST"])
+    @require_auth
+    def tournament_next_round(tournament_id):
+        data=request.get_json(silent=True) or {}
+        now=now_iso()
+        with db() as con:
+            t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+            if not t:return jsonify({"error":"Tournament not found"}),404
+            if t["status"]=="Completed": return jsonify({"error":"Tournament is already finished."}),400
+            latest=con.execute("SELECT * FROM draws WHERE tournament_id=? ORDER BY round_number DESC,id DESC LIMIT 1",(tournament_id,)).fetchone()
+            if not latest:return jsonify({"error":"Generate the first tournament draw before creating the next round."}),400
+            pending=con.execute("""SELECT COUNT(*) FROM draw_matches WHERE draw_id=? AND status!='Completed'""",(latest["id"],)).fetchone()[0]
+            if pending:
+                return jsonify({"error":f"Round {latest['round_number']} still has {pending} unfinished match(es). Record every result before creating the next round."}),400
+
+            existing=con.execute("SELECT id FROM draws WHERE tournament_id=? AND round_number>?",(tournament_id,latest["round_number"])).fetchone()
+            if existing:return jsonify({"error":"The next round has already been generated."}),409
+
+            matches=con.execute("SELECT * FROM draw_matches WHERE draw_id=? ORDER BY match_no",(latest["id"],)).fetchall()
+            winners=[]
+            losers=[]
+            for m in matches:
+                if m["winner"] and m["winner"]!="Bye":
+                    ids=(m["side_a_player_ids"] if m["winner"]==m["side_a"] else m["side_b_player_ids"]) or ""
+                    winners.append({"name":m["winner"],"ids":ids})
+                if m["status"]=="Completed" and m["side_b"]!="Bye":
+                    loser=m["side_b"] if m["winner"]==m["side_a"] else m["side_a"]
+                    ids=(m["side_b_player_ids"] if m["winner"]==m["side_a"] else m["side_a_player_ids"]) or ""
+                    losers.append({"name":loser,"ids":ids})
+
+            if len(winners)<=1:
+                return jsonify({"error":"There is no second opponent available. The current winner is the tournament champion."}),400
+
+            round_number=int(latest["round_number"] or 1)+1
+            if len(winners)==2:
+                stage="Final"
+            else:
+                slots=1
+                while slots < len(winners): slots*=2
+                stage={2:"Semifinal",4:"Quarterfinal",8:"Round of 16",16:"Round of 32",32:"Round of 64"}.get(slots,f"Round of {slots}")
+            title=f"{t['name']} — {stage}"
+            event_name=data.get("event_name") or latest["event_name"] or "Singles"
+            draw_type=data.get("draw_type") or latest["draw_type"] or "Singles"
+
+            import random
+            random.shuffle(winners)
+            fixtures=[]
+            for i in range(0,len(winners),2):
+                a=winners[i]
+                b=winners[i+1] if i+1<len(winners) else {"name":"Bye","ids":""}
+                fixtures.append((a,b))
+
+            cur=con.execute("""INSERT INTO draws(title,category_code,draw_type,created_at,tournament_id,event_name,round_name,round_number,stage,created_by)
+                               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                            (title,latest["category_code"],draw_type,now,tournament_id,event_name,stage,round_number,stage,g.current_user["username"]))
+            draw_id=cur.lastrowid
+            for idx,(a,b) in enumerate(fixtures,1):
+                code=f"LBA-{tournament_id:02d}-{draw_id:03d}-{idx:03d}"
+                status="Completed" if b["name"]=="Bye" else "Pending"
+                winner=a["name"] if b["name"]=="Bye" else None
+                con.execute("""INSERT INTO draw_matches(draw_id,match_no,side_a,side_b,side_a_player_ids,side_b_player_ids,status,winner,match_code,result_entered_by,result_entered_at)
+                               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                            (draw_id,idx,a["name"],b["name"],a["ids"],b["ids"],status,winner,code,
+                             "SYSTEM" if winner else None,now if winner else None))
+
+            # When the current stage is a true two-match semifinal, create the
+            # bronze match from the two semifinal losers alongside the final.
+            if latest["stage"]=="Semifinal" and len(losers)==2 and len(winners)==2:
+                code=f"LBA-{tournament_id:02d}-{draw_id:03d}-003"
+                a,b=losers
+                con.execute("""INSERT INTO draw_matches(draw_id,match_no,side_a,side_b,side_a_player_ids,side_b_player_ids,status,match_code)
+                               VALUES(?,?,?,?,?,?,?,?)""",
+                            (draw_id,3,a["name"],b["name"],a["ids"],b["ids"],"Pending",code))
+                con.execute("UPDATE draws SET stage='Final + Third Place',round_name='Final + Third Place' WHERE id=?",(draw_id,))
+
+            con.execute("UPDATE tournaments SET status='Live',updated_at=? WHERE id=?",(now,tournament_id))
+            con.execute("INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at) VALUES(?,?,?,?,?)",
+                        (tournament_id,g.current_user["username"],"ROUND_GENERATED",f"Round {round_number}: {stage} ({len(fixtures)} advancement match(es))",now))
+            con.commit()
+            row=con.execute("SELECT * FROM draws WHERE id=?",(draw_id,)).fetchone()
+        return jsonify(dict(row)),201
+
+    @app.route("/api/tournaments/<int:tournament_id>/finish", methods=["POST"])
+    @require_auth
+    def finish_tournament(tournament_id):
+        now=now_iso()
+        with db() as con:
+            t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+            if not t:return jsonify({"error":"Tournament not found"}),404
+            final=con.execute("""
+                SELECT dm.* FROM draw_matches dm
+                JOIN draws d ON d.id=dm.draw_id
+                WHERE d.tournament_id=? AND d.stage='Final' AND dm.status='Completed'
+                ORDER BY d.round_number DESC,dm.id DESC LIMIT 1
+            """,(tournament_id,)).fetchone()
+            if not final:return jsonify({"error":"The final has not been completed yet."}),400
+
+            third=con.execute("""
+                SELECT dm.* FROM draw_matches dm
+                JOIN draws d ON d.id=dm.draw_id
+                WHERE d.tournament_id=? AND d.stage='Final + Third Place' AND dm.match_no=3
+                  AND dm.status='Completed'
+                ORDER BY d.round_number DESC,dm.id DESC LIMIT 1
+            """,(tournament_id,)).fetchone()
+            # Fallback: a three-to-five-player bracket can have a single semifinal;
+            # its loser is treated as third place when no bronze match exists.
+            third_name=third["winner"] if third else None
+            if not third_name:
+                semis=con.execute("""
+                    SELECT dm.* FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
+                    WHERE d.tournament_id=? AND d.stage='Semifinal' AND dm.status='Completed' AND dm.side_b!='Bye'
+                    ORDER BY d.round_number DESC,dm.id
+                """,(tournament_id,)).fetchall()
+                if len(semis)==1:
+                    s=semis[0]
+                    third_name=s["side_b"] if s["winner"]==s["side_a"] else s["side_a"]
+
+            runner=final["side_b"] if final["winner"]==final["side_a"] else final["side_a"]
+            # Do not automatically finish when the last match is entered: the
+            # administrator explicitly declares completion.
+            con.execute("""UPDATE tournaments SET status='Completed',winner_name=?,runner_up_name=?,third_place_name=?,finished_by=?,finished_at=?,updated_at=? WHERE id=?""",
+                        (final["winner"],runner,third_name,g.current_user["username"],now,now,tournament_id))
+            detail=json.dumps({"first":final["winner"],"second":runner,"third":third_name},separators=(",",":"))
+            con.execute("INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at) VALUES(?,?,?,?,?)",
+                        (tournament_id,g.current_user["username"],"TOURNAMENT_FINISHED",detail,now))
+            con.commit()
+            row=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+        return jsonify(dict(row))
+
     @app.route("/api/matches/<int:match_id>", methods=["GET"])
     @require_auth
     def get_match(match_id):
@@ -775,24 +947,32 @@ def create_app():
     def record_match_result(match_id):
         data=request.get_json(silent=True) or {}
         raw_games=data.get("games") or []
-        if not isinstance(raw_games,list) or not raw_games: return jsonify({"error":"At least one game score is required"}),400
+        if not isinstance(raw_games,list) or not raw_games:return jsonify({"error":"At least one game score is required"}),400
         games=[]
-        for i,gme in enumerate(raw_games,1):
+        a_wins=b_wins=0
+        for i,gme in enumerate(raw_games[:3],1):
             a=nullable_int(gme.get("side_a_score")); b=nullable_int(gme.get("side_b_score"))
-            if a is None or b is None or a<0 or b<0: return jsonify({"error":f"Invalid score for game {i}"}),400
+            if a is None or b is None or a<0 or b<0:return jsonify({"error":f"Invalid score for game {i}"}),400
+            if a==b:return jsonify({"error":f"Game {i} cannot end in a tie."}),400
+            high=max(a,b); low=min(a,b)
+            valid=(high==21 and low<=19) or (20<=low<high<=29 and high-low>=2) or (high==30 and low in range(0,30))
+            if not valid:return jsonify({"error":f"Game {i} is not a valid badminton score. Use 21 points, win by 2 after 20-all, with 30 as the cap."}),400
             games.append((i,a,b))
-        a_wins=sum(1 for _,a,b in games if a>b); b_wins=sum(1 for _,a,b in games if b>a)
-        if a_wins==b_wins: return jsonify({"error":"The games do not determine a winner."}),400
-        winner_side="A" if a_wins>b_wins else "B"
+            if a>b:a_wins+=1
+            else:b_wins+=1
+            if a_wins==2 or b_wins==2:break
+        if max(a_wins,b_wins)<2:return jsonify({"error":"A match is best of three games; record enough games to reach two game wins."}),400
+
         now=now_iso()
         with db() as con:
-            m=con.execute("SELECT dm.*,d.tournament_id,d.event_name,d.round_name,d.title,t.name AS tournament_name FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id LEFT JOIN tournaments t ON t.id=d.tournament_id WHERE dm.id=?",(match_id,)).fetchone()
+            m=con.execute("SELECT dm.*,d.tournament_id,d.event_name,d.round_name,d.title,d.stage,t.name AS tournament_name FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id LEFT JOIN tournaments t ON t.id=d.tournament_id WHERE dm.id=?",(match_id,)).fetchone()
             if not m:return jsonify({"error":"Match not found"}),404
+            if m["side_b"]=="Bye":return jsonify({"error":"A bye does not require a result."}),400
             previous=con.execute("SELECT game_number,side_a_score,side_b_score FROM match_games WHERE match_id=? ORDER BY game_number",(match_id,)).fetchall()
             con.execute("DELETE FROM match_games WHERE match_id=?",(match_id,))
             for n,a,b in games:
                 con.execute("INSERT INTO match_games(match_id,game_number,side_a_score,side_b_score,created_at,updated_at) VALUES(?,?,?,?,?,?)",(match_id,n,a,b,now,now))
-            winner=m["side_a"] if winner_side=="A" else m["side_b"]
+            winner=m["side_a"] if a_wins>b_wins else m["side_b"]
             con.execute("""UPDATE draw_matches SET winner=?,status='Completed',result_entered_by=?,result_entered_at=COALESCE(result_entered_at,?),result_updated_at=? WHERE id=?""",
                         (winner,g.current_user["username"],now,now,match_id))
             action="RESULT_UPDATED" if previous else "RESULT_RECORDED"
@@ -802,11 +982,7 @@ def create_app():
             con.execute("INSERT INTO audit_logs(actor,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
                         (g.current_user["username"],action,"draw_matches",match_id,f"{m['side_a']} vs {m['side_b']} -> {winner}",now))
             if m["tournament_id"]:
-                pending=con.execute("""SELECT COUNT(*) FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? AND dm.status!='Completed' AND dm.side_b!='Bye'""",(m["tournament_id"],)).fetchone()[0]
-                if pending==0:
-                    con.execute("UPDATE tournaments SET status='Completed',updated_at=? WHERE id=?",(now,m["tournament_id"]))
-                else:
-                    con.execute("UPDATE tournaments SET status='Live',updated_at=? WHERE id=?",(now,m["tournament_id"]))
+                con.execute("UPDATE tournaments SET status='Live',updated_at=? WHERE id=? AND status!='Completed'",(now,m["tournament_id"]))
             con.commit()
             result={"match_id":match_id,"winner":winner,"games":[{"game_number":n,"side_a_score":a,"side_b_score":b} for n,a,b in games],"games_won":{"side_a":a_wins,"side_b":b_wins},"status":"Completed","recorded_by":g.current_user["username"],"recorded_at":now}
         return jsonify(result)
@@ -817,7 +993,7 @@ def create_app():
         with db() as con:
             t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
             if not t:return jsonify({"error":"Tournament not found"}),404
-            matches=con.execute("""SELECT dm.*,d.tournament_id,d.event_name,d.round_name FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? ORDER BY dm.id""",(tournament_id,)).fetchall()
+            matches=con.execute("""SELECT dm.*,d.tournament_id,d.event_name,d.round_name,d.stage,d.round_number FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? ORDER BY d.round_number,dm.match_no""",(tournament_id,)).fetchall()
             payload=dict(t); payload["matches"]=[dict(m) for m in matches]
         return Response(build_scoresheets_pdf(payload),mimetype="application/pdf",headers={"Content-Disposition":f"attachment; filename={safe_filename(t['name'])}_scoresheets.pdf"})
 
@@ -827,20 +1003,41 @@ def create_app():
         with db() as con:
             t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
             if not t:return jsonify({"error":"Tournament not found"}),404
-            rows=con.execute("""SELECT dm.*,d.event_name,d.round_name,d.title AS draw_title FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? ORDER BY dm.id""",(tournament_id,)).fetchall()
-        wb=Workbook(); ws=wb.active; ws.title="Tournament"
-        ws.append(["Tournament Code","Tournament","Venue","Start Date","End Date","Status"]); ws.append([t["tournament_code"],t["name"],t["venue"],t["start_date"],t["end_date"],t["status"]])
+            rows=con.execute("""SELECT dm.*,d.event_name,d.round_name,d.title AS draw_title,d.round_number,d.stage
+                                FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
+                                WHERE d.tournament_id=? ORDER BY d.round_number,dm.match_no""",(tournament_id,)).fetchall()
+        wb=Workbook()
+        ws=wb.active; ws.title="Tournament Summary"
+        ws.append(["Tournament Code","Tournament","Venue","Start Date","End Date","Status","1st Place","2nd Place","3rd Place","Finished By","Finished At"])
+        ws.append([t["tournament_code"],t["name"],t["venue"],t["start_date"],t["end_date"],t["status"],t["winner_name"] or "",t["runner_up_name"] or "",t["third_place_name"] or "",t["finished_by"] or "",t["finished_at"] or ""])
         for c in ws[1]: c.font=Font(bold=True,color="FFFFFF"); c.fill=PatternFill("solid",fgColor="0F766E")
-        ms=wb.create_sheet("Match Results"); ms.append(["Match ID","Event","Round","Player A","Player B","Status","Winner","Recorded By","Recorded At","Game 1","Game 2","Game 3"])
+        ms=wb.create_sheet("All Matches")
+        ms.append(["Round #","Stage","Match ID","Event","Player A","Player B","Status","Winner","Recorded By","Recorded At","Game 1","Game 2","Game 3"])
         for c in ms[1]: c.font=Font(bold=True,color="FFFFFF"); c.fill=PatternFill("solid",fgColor="0F766E")
         with db() as con:
             for m in rows:
                 games=con.execute("SELECT game_number,side_a_score,side_b_score FROM match_games WHERE match_id=? ORDER BY game_number",(m["id"],)).fetchall()
-                vals=[f"{t['tournament_code']}-{m['id']:04d}",m["event_name"] or "",m["round_name"] or "",m["side_a"],m["side_b"],m["status"],m["winner"] or "",m["result_entered_by"] or "",m["result_updated_at"] or ""]
+                vals=[m["round_number"] or 1,m["stage"] or m["round_name"] or "",f"{t['tournament_code']}-{m['id']:04d}",m["event_name"] or "",m["side_a"],m["side_b"],m["status"],m["winner"] or "",m["result_entered_by"] or "",m["result_updated_at"] or ""]
                 vals += [f"{g['side_a_score']}-{g['side_b_score']}" for g in games[:3]]
+                while len(vals)<13: vals.append("")
                 ms.append(vals)
+        # A separate sheet per round makes the exported workbook easy to print.
+        round_numbers=sorted({int(m["round_number"] or 1) for m in rows})
+        for rn in round_numbers:
+            rs=wb.create_sheet(f"Round {rn}")
+            rs.append(["Match ID","Stage","Event","Player A","Player B","Status","Winner","Recorded At","Game 1","Game 2","Game 3"])
+            for c in rs[1]: c.font=Font(bold=True,color="FFFFFF"); c.fill=PatternFill("solid",fgColor="047857")
+            for m in rows:
+                if int(m["round_number"] or 1)!=rn: continue
+                games=con.execute("SELECT game_number,side_a_score,side_b_score FROM match_games WHERE match_id=? ORDER BY game_number",(m["id"],)).fetchall()
+                vals=[f"{t['tournament_code']}-{m['id']:04d}",m["stage"] or "",m["event_name"] or "",m["side_a"],m["side_b"],m["status"],m["winner"] or "",m["result_updated_at"] or ""]
+                vals += [f"{g['side_a_score']}-{g['side_b_score']}" for g in games[:3]]
+                while len(vals)<11: vals.append("")
+                rs.append(vals)
         buf=io.BytesIO(); wb.save(buf); buf.seek(0)
         return Response(buf.getvalue(),mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",headers={"Content-Disposition":f"attachment; filename={safe_filename(t['name'])}_tournament.xlsx"})
+
+
 
     @app.route("/api/draws/<int:draw_id>", methods=["DELETE"])
     @require_auth
@@ -966,7 +1163,7 @@ def db():
 
 
 def now_iso():
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return datetime.now(ZoneInfo("Africa/Maseru")).replace(microsecond=0).isoformat()
 
 
 def ensure_database():
@@ -1019,7 +1216,12 @@ def ensure_database():
             description TEXT,
             created_by TEXT,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            winner_name TEXT,
+            runner_up_name TEXT,
+            third_place_name TEXT,
+            finished_by TEXT,
+            finished_at TEXT
         );
         CREATE TABLE IF NOT EXISTS match_games (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1048,7 +1250,13 @@ def ensure_database():
             title TEXT NOT NULL,
             category_code TEXT,
             draw_type TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            tournament_id INTEGER,
+            event_name TEXT,
+            round_name TEXT,
+            round_number INTEGER DEFAULT 1,
+            stage TEXT,
+            created_by TEXT
         );
         CREATE TABLE IF NOT EXISTS draw_matches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1108,6 +1316,23 @@ def ensure_database():
         CREATE INDEX IF NOT EXISTS idx_tournament_audit_tournament ON tournament_audit(tournament_id);
 
         """)
+        # Tournament schema migrations for databases created before the knockout workflow.
+        for table, column, definition in [
+            ("tournaments", "winner_name", "TEXT"),
+            ("tournaments", "runner_up_name", "TEXT"),
+            ("tournaments", "third_place_name", "TEXT"),
+            ("tournaments", "finished_by", "TEXT"),
+            ("tournaments", "finished_at", "TEXT"),
+            ("draws", "round_number", "INTEGER DEFAULT 1"),
+            ("draws", "stage", "TEXT"),
+            ("draws", "created_by", "TEXT"),
+        ]:
+            try:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            except sqlite3.OperationalError:
+                pass
+        con.execute("UPDATE draws SET round_number=COALESCE(round_number,1)")
+        con.execute("UPDATE draws SET stage=COALESCE(stage,round_name,'Round 1')")
         admin = con.execute("SELECT id FROM users WHERE username=?", (ADMIN_USERNAME,)).fetchone()
         if not admin and ADMIN_PASSWORD:
             now = now_iso()
