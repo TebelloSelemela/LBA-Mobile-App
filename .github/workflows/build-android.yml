@@ -41,8 +41,20 @@ jobs:
       - name: Create Android project
         run: npx cap add android
 
-      - name: Apply launcher icon only
+      - name: Configure Android network access and launcher icon
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          text = manifest.read_text()
+          permission = '    <uses-permission android:name="android.permission.INTERNET" />'
+          if "android.permission.INTERNET" not in text:
+              lines = text.splitlines()
+              manifest_index = next(i for i, line in enumerate(lines) if line.strip().startswith("<manifest"))
+              lines.insert(manifest_index + 1, permission)
+              text = "\n".join(lines) + "\n"
+              manifest.write_text(text)
+          PY
           base64 -d src/assets/lba-launcher-icon.b64 > android/app/src/main/res/drawable/lba_launcher.webp
           sed -i 's#@mipmap/ic_launcher_round#@drawable/lba_launcher#g; s#@mipmap/ic_launcher#@drawable/lba_launcher#g' android/app/src/main/AndroidManifest.xml
 
