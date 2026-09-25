@@ -752,7 +752,7 @@ def create_app():
             # Podium is computed from recorded knockout results and is also
             # persisted when the administrator declares the tournament finished.
             final=next((m for m in data["matches"] if m.get("stage")=="Final" and m.get("status")=="Completed"),None)
-            third=next((m for m in data["matches"] if m.get("stage")=="Third Place" and m.get("status")=="Completed"),None)
+            third=next((m for m in data["matches"] if m.get("stage")=="Final" and m.get("match_no")==3 and m.get("status")=="Completed"),None)
             podium={"first":data.get("winner_name"),"second":data.get("runner_up_name"),"third":data.get("third_place_name")}
             if final:
                 podium["first"]=final.get("winner")
