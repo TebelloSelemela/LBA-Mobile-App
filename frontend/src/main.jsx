@@ -896,7 +896,9 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
                     <b>Enter game scores — best of 3</b>
                     {games.map((g,i)=><div className="grid two" key={i}><Input label={'Game '+(i+1)+' · Player A'} type="number" value={g.a} onChange={v=>setGames(gs=>gs.map((x,j)=>j===i?{...x,a:v}:x))}/><Input label={'Game '+(i+1)+' · Player B'} type="number" value={g.b} onChange={v=>setGames(gs=>gs.map((x,j)=>j===i?{...x,b:v}:x))}/></div>)}
                     <small className="helper">Badminton scoring: 21-point games, win by 2 after 20-all, with 30 as the maximum.</small>
-                    <button className="button" onClick={()=>saveResult(m.id)} disabled={busy}>Save Result</button>
+                    <button className="button" onClick={()=>saveResult(m.id)} disabled={busy || !games.some(g=>g.a !== '' || g.b !== '')}>
+                      {busy ? 'Saving Result…' : games.some(g=>g.a !== '' || g.b !== '') ? 'Save Result' : 'Record Results'}
+                    </button>
                   </div>}
                 </div>;
               })}
@@ -980,8 +982,8 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
                 } catch (_) {}
                 return <div className="audit-row" key={h.id}>
                   <b>{h.action.replaceAll('_',' ')}</b>
-                  <small>{formatLbaTime(h.created_at)} · {h.actor}</small>
-                  <span>{display}</span>
+                  <small>{formatLbaTime(h.created_at)} · Recorded by: {h.actor}</small>
+                  <span className="audit-detail">{display}</span>
                 </div>;
               })}
               {!detail.history?.length&&<div className="empty small">No tournament history yet.</div>}
