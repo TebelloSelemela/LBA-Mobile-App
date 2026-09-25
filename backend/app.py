@@ -753,17 +753,24 @@ def create_app():
             # persisted when the administrator declares the tournament finished.
             final=next((m for m in data["matches"] if m.get("stage")=="Final" and m.get("status")=="Completed"),None)
             third=next((m for m in data["matches"] if m.get("stage")=="Final" and m.get("match_no")==3 and m.get("status")=="Completed"),None)
-            podium={"first":data.get("winner_name"),"second":data.get("runner_up_name"),"third":data.get("third_place_name")}
+            podium={"first":data.get("winner_name"),"second":data.get("runner_up_name"),"third":data.get("third_place_name"),"third_players":[]}
             if final:
                 podium["first"]=final.get("winner")
                 podium["second"]=final.get("side_b") if final.get("winner")==final.get("side_a") else final.get("side_a")
+            semis=[m for m in data["matches"] if m.get("stage")=="Semifinal" and m.get("status")=="Completed" and m.get("side_b")!="Bye"]
             if third:
                 podium["third"]=third.get("winner")
-            elif not podium["third"]:
-                semis=[m for m in data["matches"] if m.get("stage")=="Semifinal" and m.get("status")=="Completed" and m.get("side_b")!="Bye"]
-                if len(semis)==1:
-                    s=semis[0]
-                    podium["third"]=s.get("side_b") if s.get("winner")==s.get("side_a") else s.get("side_a")
+                podium["third_players"]=[third.get("winner")]
+            elif semis:
+                losers=[]
+                for s in semis:
+                    if s.get("winner")==s.get("side_a"):
+                        losers.append(s.get("side_b"))
+                    else:
+                        losers.append(s.get("side_a"))
+                podium["third_players"]=[x for x in losers if x]
+                if len(podium["third_players"])==1:
+                    podium["third"]=podium["third_players"][0]
             data["podium"]=podium
             data["server_time"]=now_iso()
             data["timezone"]="Africa/Maseru (SAST, UTC+02:00)"
