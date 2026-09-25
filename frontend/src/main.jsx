@@ -571,6 +571,149 @@ function DrawMatches({ draw }) {
   </div>;
 }
 
+
+function TournamentScreen({ tournaments, players, categoryOptions, refresh, setMessage }) {
+  const [selectedId, setSelectedId] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [form, setForm] = useState({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft'});
+  const [draw, setDraw] = useState({title:'Tournament Draw',category_code:'All',draw_type:'Singles',event_name:"Men's Singles",round_name:'Round 1',seed_by_rank:false,player_ids:[]});
+  const [openResult, setOpenResult] = useState(null);
+  const [games, setGames] = useState([{a:'',b:''},{a:'',b:''},{a:'',b:''}]);
+  const [busy, setBusy] = useState(false);
+
+  async function load(id) {
+    if (!id) { setDetail(null); return; }
+    try { setDetail(await api('/tournaments/'+id)); } catch (e) { setMessage(e.message); }
+  }
+  useEffect(() => { if (selectedId) load(selectedId); }, [selectedId]);
+
+  const candidates = useMemo(() => players.filter(p => p.status === 'Active' && (draw.category_code === 'All' || p.category_code === draw.category_code)), [players, draw.category_code]);
+
+  function togglePlayer(id) {
+    setDraw(x => {
+      const ids = new Set(x.player_ids);
+      if (ids.has(id)) ids.delete(id); else ids.add(id);
+      return {...x, player_ids:[...ids]};
+    });
+  }
+
+  async function createTournament(e) {
+    e.preventDefault();
+    if (!form.name.trim()) { setMessage('Tournament name is required.'); return; }
+    setBusy(true);
+    try {
+      const t = await api('/tournaments', {method:'POST', body:JSON.stringify(form)});
+      setForm({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft'});
+      await refresh();
+      setSelectedId(t.id);
+      setMessage('Tournament created.');
+    } catch (e) { setMessage(e.message); }
+    finally { setBusy(false); }
+  }
+
+  async function generateTournamentDraw(e) {
+    e.preventDefault();
+    if (!selectedId || !draw.player_ids.length) { setMessage('Select attending players first.'); return; }
+    setBusy(true);
+    try {
+      await api('/tournaments/'+selectedId+'/draw', {method:'POST', body:JSON.stringify(draw)});
+      await load(selectedId); await refresh(); setMessage('Tournament draw generated.');
+    } catch (e) { setMessage(e.message); }
+    finally { setBusy(false); }
+  }
+
+  function startResult(m) {
+    setOpenResult(m.id);
+    const old = m.games || [];
+    setGames([0,1,2].map(i => ({a: old[i] ? old[i].side_a_score : '', b: old[i] ? old[i].side_b_score : ''})));
+  }
+
+  async function saveResult(matchId) {
+    const used = games.filter(g => g.a !== '' && g.b !== '').map(g => ({side_a_score:Number(g.a),side_b_score:Number(g.b)}));
+    if (!used.length) { setMessage('Enter at least one game score.'); return; }
+    setBusy(true);
+    try {
+      await api('/matches/'+matchId+'/result', {method:'POST',body:JSON.stringify({games:used})});
+      setOpenResult(null); await load(selectedId); await refresh(); setMessage('Match result recorded.');
+    } catch (e) { setMessage(e.message); }
+    finally { setBusy(false); }
+  }
+
+  async function exportFile(path, name) {
+    try {
+      const res = await fetch(API_BASE+path,{headers:{Authorization:'Bearer '+getToken()}});
+      if (!res.ok) throw new Error('Export failed.');
+      setMessage(await saveBlob(await res.blob(),name));
+    } catch (e) { setMessage(e.message); }
+  }
+
+  const completed = detail ? (detail.matches || []).filter(m => m.status === 'Completed').length : 0;
+  const total = detail ? (detail.matches || []).length : 0;
+
+  return <section className="grid two">
+    <div className="panel">
+      <div className="section-head"><div><span className="eyebrow">TOURNAMENT MANAGEMENT</span><h3>Tournaments</h3></div><CalendarDays size={22}/></div>
+      <form className="form" onSubmit={createTournament}>
+        <Input label="Tournament name" value={form.name} onChange={v=>setForm({...form,name:v})}/>
+        <Input label="Tournament code (optional)" value={form.tournament_code} onChange={v=>setForm({...form,tournament_code:v})}/>
+        <Input label="Venue" value={form.venue} onChange={v=>setForm({...form,venue:v})}/>
+        <div className="grid two"><Input label="Start date" type="date" value={form.start_date} onChange={v=>setForm({...form,start_date:v})}/><Input label="End date" type="date" value={form.end_date} onChange={v=>setForm({...form,end_date:v})}/></div>
+        <button className="button" disabled={busy}><Plus size={16}/> Create Tournament</button>
+      </form>
+      <div className="draw-list">{tournaments.map(t=><button key={t.id} className="draw-item" onClick={()=>setSelectedId(t.id)}><b>{t.name}</b><small>{t.tournament_code} · {t.status} · {t.completed_matches || 0}/{t.total_matches || 0} matches complete</small></button>)}{!tournaments.length&&<div className="empty">No tournaments yet.</div>}</div>
+    </div>
+
+    <div className="panel wide">
+      {!detail ? <div className="empty"><Trophy size={32}/><h3>Select a tournament</h3><p>Create a tournament on the left, then generate its draw and record results here.</p></div> :
+      <>
+        <div className="section-head">
+          <div><span className="eyebrow">{detail.tournament_code}</span><h3>{detail.name}</h3><p>{detail.venue || 'Venue not set'} · {detail.start_date || 'Date not set'} · <b>{detail.status}</b></p></div>
+          <div className="quick-actions">
+            <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/scoresheets.pdf',detail.tournament_code+'_scoresheets.pdf')}><ClipboardList size={16}/> Scoresheets</button>
+            <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/export.xlsx',detail.tournament_code+'_tournament.xlsx')}><Download size={16}/> Excel</button>
+          </div>
+        </div>
+
+        <div className="stats"><Stat label="Matches" value={total}/><Stat label="Completed" value={completed}/><Stat label="Pending" value={Math.max(0,total-completed)}/></div>
+
+        <div className="panel">
+          <h3>Generate Draw for this Tournament</h3>
+          <form className="form" onSubmit={generateTournamentDraw}>
+            <div className="grid two">
+              <Input label="Draw title" value={draw.title} onChange={v=>setDraw({...draw,title:v})}/>
+              <Input label="Event" value={draw.event_name} onChange={v=>setDraw({...draw,event_name:v})}/>
+              <Input label="Round" value={draw.round_name} onChange={v=>setDraw({...draw,round_name:v})}/>
+              <label><span>Category</span><select value={draw.category_code} onChange={e=>setDraw({...draw,category_code:e.target.value,player_ids:[]})}>{categoryOptions.map(c=><option key={c}>{c}</option>)}</select></label>
+            </div>
+            <div className="participant-head"><b>Attending players</b><span>{draw.player_ids.length} selected</span></div>
+            <div className="participant-list">{candidates.map(p=><label className="participant" key={p.id}><input type="checkbox" checked={draw.player_ids.includes(p.id)} onChange={()=>togglePlayer(p.id)}/><span><b>{p.full_name}</b><small>{p.category_code} · Rank #{p.rank_position || '-'} · {p.total_points} pts</small></span></label>)}</div>
+            <button className="button" disabled={busy}><Shuffle size={16}/> Generate Tournament Draw</button>
+          </form>
+        </div>
+
+        <h3>Live Matches</h3>
+        <div className="fixtures">
+          {(detail.matches || []).map(m => <div className="fixture" key={m.id}>
+            <small>{m.match_code || ('Match '+m.match_no)} · {m.event_name || '-'} · {m.round_name || '-'}</small>
+            <div><b>{m.side_a}</b><span>VS</span><b>{m.side_b}</b></div>
+            {m.status === 'Completed' ? <div className="helper"><CheckCircle2 size={15}/> {m.winner} · {(m.games || []).map(g=>g.side_a_score+'-'+g.side_b_score).join(', ')}</div> :
+              m.side_b === 'Bye' ? <div className="helper">Bye</div> :
+              <button className="mini" onClick={()=>startResult(m)}>Record Result</button>}
+            {openResult === m.id && <div className="form result-entry">
+              <b>Enter game scores</b>
+              {games.map((g,i)=><div className="grid two" key={i}><Input label={'Game '+(i+1)+' · Player A'} value={g.a} onChange={v=>setGames(gs=>gs.map((x,j)=>j===i?{...x,a:v}:x))}/><Input label={'Game '+(i+1)+' · Player B'} value={g.b} onChange={v=>setGames(gs=>gs.map((x,j)=>j===i?{...x,b:v}:x))}/></div>)}
+              <button className="button" onClick={()=>saveResult(m.id)} disabled={busy}>Save Result</button>
+            </div>}
+          </div>)}
+        </div>
+
+        <h3>Tournament History</h3>
+        <div className="audit-list">{(detail.history || []).map(h=><div className="audit-row" key={h.id}><b>{h.action}</b><small>{h.created_at} · {h.actor}</small><span>{h.details}</span></div>)}{!detail.history?.length&&<div className="empty small">No tournament history yet.</div>}</div>
+      </>}
+    </div>
+  </section>;
+}
+
 function Reports() {
   return <section className="panel"><h3>Reports</h3><div className="report-grid"><div><h4>Official Ranking Register</h4><p>Use Export CSV for Excel-ready records.</p></div><div><h4>Tournament Draw Sheet</h4><p>Select attending players, generate a draw, then print the browser page.</p></div><div><h4>Player Activity Summary</h4><p>Use category and status filters to review participation.</p></div></div></section>;
 }
