@@ -617,7 +617,7 @@ def create_app():
             slots=1
             while slots < len(players): slots*=2
             if len(players)==2: stage="Final"
-            else: stage={2:"Semifinal",4:"Quarterfinal",8:"Round of 16",16:"Round of 32",32:"Round of 64"}.get(slots,f"Round of {slots}")
+            else: stage={2:"Final",4:"Semifinal",8:"Quarterfinal",16:"Round of 16",32:"Round of 32",64:"Round of 64"}.get(slots,f"Round of {slots}")
             round_name=stage
             fixtures=build_fixtures(players,draw_type); now=now_iso()
             cur=con.execute("""INSERT INTO draws(title,category_code,draw_type,created_at,tournament_id,event_name,round_name,round_number,stage,created_by)
