@@ -2,7 +2,9 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173",
     "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 4173"
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "desktop:dev": "vite build && electron electron/main.cjs",
+    "desktop:build": "vite build && electron-builder --win portable"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
@@ -16,6 +18,8 @@
     "@capacitor/share": "6.0.3"
   },
   "devDependencies": {
-    "@capacitor/cli": "6.2.1"
+    "@capacitor/cli": "6.2.1",
+    "electron": "^38.2.0",
+    "electron-builder": "^26.0.12"
   }
 }
