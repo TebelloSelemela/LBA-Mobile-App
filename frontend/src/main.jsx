@@ -679,6 +679,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const [detail, setDetail] = useState(null);
   const [form, setForm] = useState({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft'});
   const [draw, setDraw] = useState({title:'Tournament Draw',category_code:'All',draw_type:'Singles',event_name:'MS',seed_by_rank:false,player_ids:[]});
+  const [selectedEvent, setSelectedEvent] = useState('MS');
   const [openResult, setOpenResult] = useState(null);
   const [resultDirty, setResultDirty] = useState(false);
   const [games, setGames] = useState([{a:'',b:''},{a:'',b:''},{a:'',b:''}]);
@@ -698,6 +699,10 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   }
 
   useEffect(() => { if (selectedId) load(selectedId); }, [selectedId]);
+  useEffect(() => {
+    const events = [...new Set((detail?.draws || []).map(d => (d.event_name || 'MS').toUpperCase()))];
+    if (events.length && !events.includes(selectedEvent)) setSelectedEvent(events[0]);
+  }, [detail, selectedEvent]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -734,23 +739,36 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     });
   }, [players, draw.category_code, draw.event_name]);
 
+  const eventOptions = ['MS','WS','MD','WD','XD'];
+  const eventDraws = useMemo(() => (detail?.draws || []).filter(d => (d.event_name || 'MS').toUpperCase() === selectedEvent), [detail, selectedEvent]);
+  const eventHasDraw = eventDraws.length > 0;
   const rounds = useMemo(() => {
     const map = new Map();
-    (detail?.matches || []).forEach(m => {
+    (detail?.matches || []).filter(m => (m.event_name || 'MS').toUpperCase() === selectedEvent).forEach(m => {
       const rn = Number(m.round_number || 1);
       if (!map.has(rn)) map.set(rn, { number: rn, stage: m.stage || m.draw_round || ('Round '+rn), matches: [] });
       map.get(rn).matches.push(m);
     });
     return [...map.values()].sort((a,b) => a.number-b.number);
-  }, [detail]);
+  }, [detail, selectedEvent]);
 
   const latestRound = rounds[rounds.length-1];
   const latestRoundComplete = !!latestRound && latestRound.matches.length > 0 && latestRound.matches.every(m => m.status === 'Completed');
   const hasLaterRound = rounds.length > 1;
-  const finalMatch = (detail?.matches || []).find(m => m.stage === 'Final' && m.match_no !== 3);
-  const thirdMatch = (detail?.matches || []).find(m => m.stage === 'Final' && m.match_no === 3);
-  const readyToFinish = finalMatch?.status === 'Completed' && (!thirdMatch || thirdMatch.status === 'Completed');
+  const finalMatch = (detail?.matches || []).find(m => (m.event_name || 'MS').toUpperCase() === selectedEvent && m.stage === 'Final' && m.match_no !== 3);
+  const thirdMatch = (detail?.matches || []).find(m => (m.event_name || 'MS').toUpperCase() === selectedEvent && m.stage === 'Final' && m.match_no === 3);
+  const eventReadiness = useMemo(() => {
+    const events = [...new Set((detail?.draws || []).map(d => (d.event_name || 'MS').toUpperCase()))];
+    return events.map(event => {
+      const matches = (detail?.matches || []).filter(m => (m.event_name || 'MS').toUpperCase() === event);
+      const final = matches.find(m => m.stage === 'Final' && m.match_no !== 3);
+      const bronze = matches.find(m => m.stage === 'Final' && m.match_no === 3);
+      return {event, ready: !!final && final.status === 'Completed' && (!bronze || bronze.status === 'Completed'), final, bronze};
+    });
+  }, [detail]);
+  const readyToFinish = eventReadiness.length > 0 && eventReadiness.every(x => x.ready);
   const podium = detail?.podium || {};
+  const eventPodiums = detail?.event_podiums || {};
 
   function togglePlayer(id) {
     setDraw(x => {
@@ -777,6 +795,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   async function generateTournamentDraw(e) {
     e.preventDefault();
     if (!selectedId || draw.player_ids.length < 2) { setMessage('Select at least two attending players first.'); return; }
+    if (eventHasDraw) { setMessage(selectedEvent+' already has a draw in this tournament. Select another event to create another draw.'); return; }
     setBusy(true);
     try {
       await api('/tournaments/'+selectedId+'/draw', {
@@ -785,7 +804,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           title: draw.title,
           category_code: draw.category_code,
           draw_type: draw.draw_type,
-          event_name: draw.event_name,
+          event_name: selectedEvent,
           seed_by_rank: draw.seed_by_rank,
           player_ids: draw.player_ids
         })
@@ -901,7 +920,8 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   async function finishTournament() {
     if (!selectedId) return;
     if (!readyToFinish) {
-      setMessage(thirdMatch?.status !== 'Completed' ? 'Complete the final and third-place match before declaring the tournament finished.' : 'Complete the final before declaring the tournament finished.');
+      const pending = eventReadiness.filter(x => !x.ready).map(x => x.event).join(', ');
+      setMessage('Complete the final (and any third-place match) for every event before declaring the tournament finished. Pending: '+pending+'.');
       return;
     }
     if (!confirm('Declare this tournament officially finished? This will record the final podium and completion time.')) return;
@@ -1011,12 +1031,29 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           <Stat label="Pending" value={(detail.matches || []).filter(m=>m.status!=='Completed').length}/>
         </div>
 
-        {!rounds.length ? <div className="panel">
-          <h3>Set up Round 1</h3>
+        <div className="tournament-event-bar">
+          <div>
+            <span className="eyebrow">EVENT DRAWS</span>
+            <b>One tournament · multiple independent draws</b>
+            <small>Create and run MS, WS, MD, WD and XD under the same tournament record.</small>
+          </div>
+          <div className="event-tabs">
+            {eventOptions.map(event => {
+              const exists=(detail?.draws || []).some(d => (d.event_name || 'MS').toUpperCase()===event);
+              return <button key={event} type="button" className={selectedEvent===event ? 'event-tab active' : 'event-tab'} onClick={()=>{setSelectedEvent(event);setDraw(d=>({...d,event_name:event,player_ids:[],title:detail.name+' — '+event}));}}>
+                <b>{event}</b><span>{exists ? 'Draw created' : 'Add draw'}</span>
+              </button>;
+            })}
+          </div>
+        </div>
+
+        {!eventHasDraw ? <div className="panel">
+          <h3>Set up {selectedEvent} Draw</h3>
+          <p className="helper">This tournament can contain separate draws for MS, WS, MD, WD and XD. Select an event below and generate its Round 1 independently.</p>
           <form className="form" onSubmit={generateTournamentDraw}>
             <div className="tournament-setup-grid">
               <Input label="Draw title" value={draw.title} onChange={v=>setDraw({...draw,title:v})}/>
-              <label><span>Event</span><select value={draw.event_name} onChange={e=>setDraw({...draw,event_name:e.target.value,player_ids:[]})}>
+              <label><span>Event</span><select value={selectedEvent} onChange={e=>{const event=e.target.value;setSelectedEvent(event);setDraw({...draw,event_name:event,player_ids:[],title:detail.name+' — '+event});}}>
                 <option value="MS">MS — Boys Singles</option>
                 <option value="WS">WS — Girls Singles</option>
                 <option value="MD">MD — Boys Doubles</option>
