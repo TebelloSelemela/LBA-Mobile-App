@@ -358,3 +358,14 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
 @media(max-width:700px){
  .event-podium-row,.history-event-summary>div{grid-template-columns:1fr 1fr}
 }
+
+
+/* Fix tournament score capture layout */
+.tournament-fixture > .result-entry{
+  display:block!important;
+}
+.tournament-fixture > .result-entry > .result-game-row{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;
+  gap:12px!important;
+}
