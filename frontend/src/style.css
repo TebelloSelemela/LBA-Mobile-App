@@ -261,3 +261,13 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
 @keyframes projector-spin{to{transform:rotate(360deg)}}
 :root[data-theme="light"] .projector-board{background:radial-gradient(circle at 50% 0,#d8f7ed,transparent 38%),linear-gradient(145deg,#ffffff,#edf7f4)}:root[data-theme="light"] .projector-title{border-color:#dbe5ea}:root[data-theme="light"] .projector-title h1,:root[data-theme="light"] .projector-match strong{color:#142b3b}:root[data-theme="light"] .projector-match{background:#fff;border-color:#dbe5ea}:root[data-theme="light"] .projector-footer{border-color:#dbe5ea}
 @media(max-width:900px){.projector-toolbar{flex-direction:column}.projector-toolbar .quick-actions{display:grid;grid-template-columns:1fr;width:100%}.projector-toolbar .quick-actions>*{width:100%}.projector-board{padding:18px}.projector-title h1{font-size:28px}.projector-matches{grid-template-columns:1fr}.projector-match strong{font-size:17px}}
+
+/* Junior tournament setup: prevent event/category/seed overlap */
+.tournament-setup-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(220px,1fr);gap:14px 16px;align-items:end;margin-bottom:8px}
+.tournament-setup-grid>label,.tournament-setup-grid>div{min-width:0}
+.tournament-setup-grid .setup-seed{grid-column:1 / -1;margin:2px 0 8px!important;white-space:normal;line-height:1.35}
+.tournament-setup-grid select{min-width:0}
+.tournament-setup-grid input,.tournament-setup-grid select{box-sizing:border-box}
+@media(max-width:1050px){.tournament-setup-grid{grid-template-columns:1fr}.tournament-setup-grid .setup-seed{grid-column:auto}}
+.tournament-fixture .result-entry{margin-top:14px;padding:14px;border:1px solid var(--ui-line);border-radius:16px;background:var(--ui-input)}
+.round-workspace,.tournament-round-history,.audit-history{min-width:0;overflow:hidden}
