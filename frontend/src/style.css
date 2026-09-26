@@ -301,3 +301,50 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
     grid-template-columns:1fr;
   }
 }
+
+
+/* Multiple event draws within one tournament */
+.tournament-event-bar{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:14px;
+  padding:14px;
+  border:1px solid rgba(148,163,184,.18);
+  border-radius:14px;
+  background:rgba(15,23,42,.24);
+}
+.tournament-event-bar>div:first-child{
+  min-width:220px;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.tournament-event-bar>div:first-child small{opacity:.72}
+.event-tabs{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  justify-content:flex-end;
+}
+.event-tab{
+  min-width:82px;
+  padding:9px 11px;
+  border:1px solid rgba(148,163,184,.25);
+  border-radius:10px;
+  background:transparent;
+  color:inherit;
+  cursor:pointer;
+  text-align:left;
+}
+.event-tab b,.event-tab span{display:block}
+.event-tab span{font-size:11px;opacity:.65;margin-top:3px}
+.event-tab.active{
+  border-color:rgba(45,212,191,.7);
+  background:rgba(13,148,136,.16);
+}
+@media(max-width:900px){
+  .tournament-event-bar{align-items:stretch;flex-direction:column}
+  .event-tabs{justify-content:flex-start}
+}
