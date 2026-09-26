@@ -700,9 +700,11 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
 
   useEffect(() => { if (selectedId) load(selectedId); }, [selectedId]);
   useEffect(() => {
-    const events = [...new Set((detail?.draws || []).map(d => (d.event_name || 'MS').toUpperCase()))];
-    if (events.length && !events.includes(selectedEvent)) setSelectedEvent(events[0]);
-  }, [detail, selectedEvent]);
+    // Keep the user's selected event even when that event has no draw yet.
+    // This is what allows a tournament with MS already created to add WS,
+    // then MD, WD and XD one-by-one.
+    if (!['MS','WS','MD','WD','XD'].includes(selectedEvent)) setSelectedEvent('MS');
+  }, [selectedEvent]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -731,13 +733,17 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       if (p.status !== 'Active') return false;
       const categoryOk = draw.category_code === 'All' || p.category_code === draw.category_code;
       if (!categoryOk) return false;
-      const event = draw.event_name;
-      if (event === 'MS' || event === 'MD') return p.gender === 'Men';
-      if (event === 'WS' || event === 'WD') return p.gender === 'Women';
-      if (event === 'XD') return p.gender === 'Men' || p.gender === 'Women';
+      const event = (draw.event_name || selectedEvent || 'MS').toUpperCase();
+      const gender = String(p.gender || '').trim().toLowerCase();
+      const eventType = String(p.event_type || '').trim().toLowerCase();
+      const isMen = gender === 'men' || gender === 'male' || gender === 'boys' || gender === 'boy' || eventType.includes("men's") || eventType.includes('boys');
+      const isWomen = gender === 'women' || gender === 'female' || gender === 'girls' || gender === 'girl' || eventType.includes("women's") || eventType.includes('girls');
+      if (event === 'MS' || event === 'MD') return isMen;
+      if (event === 'WS' || event === 'WD') return isWomen;
+      if (event === 'XD') return isMen || isWomen;
       return true;
     });
-  }, [players, draw.category_code, draw.event_name]);
+  }, [players, draw.category_code, draw.event_name, selectedEvent]);
 
   const eventOptions = ['MS','WS','MD','WD','XD'];
   const eventDraws = useMemo(() => (detail?.draws || []).filter(d => (d.event_name || 'MS').toUpperCase() === selectedEvent), [detail, selectedEvent]);
