@@ -48,5 +48,6 @@
   "name": "lba-tournament-desktop",
   "version": "1.0.0",
   "description": "Lesotho Badminton Association tournament and ranking administration system",
-  "author": "Lesotho Badminton Association"
+  "author": "Lesotho Badminton Association",
+  "main": "electron/main.cjs"
 }
