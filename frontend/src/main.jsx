@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users, Home, Menu, X, Sun, Moon, ShieldCheck, CalendarDays, CheckCircle2, ClipboardList } from 'lucide-react';
+import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users, Home, Menu, X, Sun, Moon, ShieldCheck, CalendarDays, CheckCircle2, ClipboardList, MonitorPlay, Maximize, Minimize } from 'lucide-react';
 import './style.css';
 import logo from './assets/lba-logo.png';
 
@@ -355,7 +355,7 @@ function App() {
       <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
         <div className="brand"><img src={logo} alt="Lesotho Badminton Association logo" className="brand-logo" /><div><h1>Badminton Admin</h1><p>Lesotho Badminton Association</p></div><button className="close-menu" onClick={() => setMenuOpen(false)}><X size={20}/></button></div>
         {[
-          ['home','Overview',Home],['records','Records',Users],['draws','Draws',Shuffle],['tournaments','Tournaments',Trophy],['reports','Reports',Trophy]
+          ['home','Overview',Home],['records','Records',Users],['draws','Draws',Shuffle],['tournaments','Tournaments',Trophy],['projector','Projector',MonitorPlay],['reports','Reports',Trophy]
         ].map(([id,label,Icon]) => <button key={id} className={activeTab === id ? 'nav active' : 'nav'} onClick={() => {setActiveTab(id);setMenuOpen(false);}}><Icon size={18}/><span>{label}</span></button>)}
         <button className="nav" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}<span>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span></button>
         <button className="logout" onClick={logout}><Lock size={17}/> Sign out</button>
@@ -384,13 +384,104 @@ function App() {
         {activeTab === 'records' && <Records players={players} form={form} setForm={setForm} savePlayer={savePlayer} deletePlayer={deletePlayer} filters={filters} setFilters={setFilters} categoryOptions={categoryOptions} loadAll={loadAll} pointInputs={pointInputs} setPointInputs={setPointInputs} addPoints={addPoints} />}
         {activeTab === 'draws' && <Draws draws={draws} drawForm={drawForm} setDrawForm={setDrawForm} generateDraw={generateDraw} categoryOptions={categoryOptions} drawCandidates={drawCandidates} />}
         {activeTab === 'tournaments' && <TournamentScreen tournaments={tournaments} players={players} categoryOptions={categoryOptions} refresh={loadAll} setMessage={setMessage} />}
+        {activeTab === 'projector' && <ProjectorScreen draws={draws} tournaments={tournaments} refresh={loadAll} />}
         {activeTab === 'reports' && <Reports />}
       </main>
-      <nav className="mobile-nav">{[["home","Home",Home],["records","Players",Users],["draws","Draws",Shuffle],["tournaments","Tournaments",Trophy],["reports","Reports",Trophy]].map(([id,label,Icon])=><button key={id} className={activeTab===id?"active":""} onClick={()=>setActiveTab(id)}><Icon size={19}/><span>{label}</span></button>)}</nav>
+      <nav className="mobile-nav">{[["home","Home",Home],["records","Players",Users],["draws","Draws",Shuffle],["tournaments","Tournaments",Trophy],["projector","Projector",MonitorPlay],["reports","Reports",Trophy]].map(([id,label,Icon])=><button key={id} className={activeTab===id?"active":""} onClick={()=>setActiveTab(id)}><Icon size={19}/><span>{label}</span></button>)}</nav>
     </div>
     {booting && <BootSplash />}
     </>
   );
+}
+
+
+function ProjectorScreen({ draws, tournaments, refresh }) {
+  const [selectedId, setSelectedId] = useState(draws[0]?.id || null);
+  const [full, setFull] = useState(null);
+  const [revealing, setRevealing] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    if (!selectedId && draws[0]) setSelectedId(draws[0].id);
+  }, [draws, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId) { setFull(null); return; }
+    api('/draws/'+selectedId).then(setFull).catch(() => setFull(null));
+  }, [selectedId]);
+
+  const draw = full || draws.find(d => d.id === selectedId) || draws[0];
+  const matches = draw?.matches || [];
+  const tournamentName = draw?.event_name || draw?.title || 'LBA Tournament Draw';
+
+  async function toggleFullscreen() {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+        setIsFullscreen(true);
+      } else {
+        await document.exitFullscreen();
+        setIsFullscreen(false);
+      }
+    } catch {}
+  }
+
+  function revealDraw() {
+    setRevealing(true);
+    setRevealed(false);
+    window.setTimeout(() => {
+      setRevealing(false);
+      setRevealed(true);
+    }, 1500);
+  }
+
+  return <section className="projector-screen">
+    <div className="projector-toolbar">
+      <div>
+        <span className="eyebrow">LIVE TOURNAMENT PRESENTATION</span>
+        <h2>Random Draw Presentation</h2>
+        <p>Use this screen on the projector to display the generated draw to players and officials.</p>
+      </div>
+      <div className="quick-actions">
+        <select value={selectedId || ''} onChange={e => {setSelectedId(Number(e.target.value));setRevealed(false);}}>
+          {!draws.length && <option value="">No draws available</option>}
+          {draws.map(d => <option key={d.id} value={d.id}>{d.title} · {d.category_code}</option>)}
+        </select>
+        <button className="button" onClick={revealDraw} disabled={!matches.length || revealing}>
+          <Shuffle size={16}/> {revealing ? 'Revealing…' : 'Reveal Draw'}
+        </button>
+        <button className="button secondary" onClick={toggleFullscreen}>
+          {isFullscreen ? <Minimize size={16}/> : <Maximize size={16}/>} {isFullscreen ? 'Exit Fullscreen' : 'Projector Fullscreen'}
+        </button>
+      </div>
+    </div>
+
+    {!draw ? <div className="projector-empty"><MonitorPlay size={60}/><h2>No draw available</h2><p>Generate a draw first, then return here to present it.</p></div> :
+      <div className="projector-board">
+        <div className="projector-title">
+          <img src={logo} alt="LBA" />
+          <div>
+            <span>LESOTHO BADMINTON ASSOCIATION</span>
+            <h1>{tournamentName}</h1>
+            <p>{draw.category_code} · {draw.draw_type} · {matches.length} matches · {revealed ? 'DRAW REVEALED' : 'READY TO REVEAL'}</p>
+          </div>
+        </div>
+        {revealing && <div className="draw-reveal-animation">
+          <Shuffle size={54}/><b>SHUFFLING PLAYERS…</b><span>Random draw generated by the tournament system</span>
+        </div>}
+        {!revealing && <div className="projector-matches">
+          {matches.map((m,i) => <div className="projector-match" key={m.id}>
+            <span className="projector-match-no">MATCH {m.match_no}</span>
+            <div><strong>{revealed ? m.side_a : 'PLAYER A'}</strong><em>VS</em><strong>{revealed ? m.side_b : 'PLAYER B'}</strong></div>
+          </div>)}
+        </div>}
+        <div className="projector-footer">
+          <span>Generated by LBA Tournament System</span>
+          <span>{draw.created_at || ''}</span>
+        </div>
+      </div>}
+  </section>;
 }
 
 
