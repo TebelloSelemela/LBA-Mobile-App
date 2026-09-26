@@ -348,3 +348,13 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   .tournament-event-bar{align-items:stretch;flex-direction:column}
   .event-tabs{justify-content:flex-start}
 }
+
+.event-podium-list{display:grid;gap:8px;margin-top:10px}
+.event-podium-row{display:grid;grid-template-columns:55px repeat(3,minmax(0,1fr));gap:8px;align-items:center;padding:9px 10px;border-radius:10px;background:rgba(148,163,184,.08)}
+.event-podium-row span{font-size:12px}
+.history-event-summary{display:grid;gap:8px;margin-top:10px}
+.history-event-summary>div{display:grid;grid-template-columns:45px repeat(3,minmax(0,1fr));gap:8px;font-size:12px;align-items:center}
+.history-date{display:block;margin-top:8px;opacity:.65}
+@media(max-width:700px){
+ .event-podium-row,.history-event-summary>div{grid-template-columns:1fr 1fr}
+}
