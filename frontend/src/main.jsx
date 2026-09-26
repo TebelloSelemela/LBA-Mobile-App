@@ -678,7 +678,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
   const [form, setForm] = useState({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft'});
-  const [draw, setDraw] = useState({title:'Tournament Draw',category_code:'All',draw_type:'Singles',event_name:"Men's Singles",seed_by_rank:false,player_ids:[]});
+  const [draw, setDraw] = useState({title:'Tournament Draw',category_code:'All',draw_type:'Singles',event_name:'MS',seed_by_rank:false,player_ids:[]});
   const [openResult, setOpenResult] = useState(null);
   const [resultDirty, setResultDirty] = useState(false);
   const [games, setGames] = useState([{a:'',b:''},{a:'',b:''},{a:'',b:''}]);
@@ -721,10 +721,18 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     return () => { cancelled = true; };
   }, [tournaments]);
 
-  const candidates = useMemo(
-    () => players.filter(p => p.status === 'Active' && (draw.category_code === 'All' || p.category_code === draw.category_code)),
-    [players, draw.category_code]
-  );
+  const candidates = useMemo(() => {
+    return players.filter(p => {
+      if (p.status !== 'Active') return false;
+      const categoryOk = draw.category_code === 'All' || p.category_code === draw.category_code;
+      if (!categoryOk) return false;
+      const event = draw.event_name;
+      if (event === 'MS' || event === 'MD') return p.gender === 'Men';
+      if (event === 'WS' || event === 'WD') return p.gender === 'Women';
+      if (event === 'XD') return p.gender === 'Men' || p.gender === 'Women';
+      return true;
+    });
+  }, [players, draw.category_code, draw.event_name]);
 
   const rounds = useMemo(() => {
     const map = new Map();
@@ -1006,15 +1014,21 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
         {!rounds.length ? <div className="panel">
           <h3>Set up Round 1</h3>
           <form className="form" onSubmit={generateTournamentDraw}>
-            <div className="grid two">
+            <div className="tournament-setup-grid">
               <Input label="Draw title" value={draw.title} onChange={v=>setDraw({...draw,title:v})}/>
-              <Input label="Event" value={draw.event_name} onChange={v=>setDraw({...draw,event_name:v})}/>
-              <label><span>Category</span><select value={draw.category_code} onChange={e=>setDraw({...draw,category_code:e.target.value,player_ids:[]})}>{categoryOptions.map(c=><option key={c}>{c}</option>)}</select></label>
-              <label className="check"><input type="checkbox" checked={draw.seed_by_rank} onChange={e=>setDraw({...draw,seed_by_rank:e.target.checked})}/> Seed the first round by ranking</label>
+              <label><span>Event</span><select value={draw.event_name} onChange={e=>setDraw({...draw,event_name:e.target.value,player_ids:[]})}>
+                <option value="MS">MS — Boys Singles</option>
+                <option value="WS">WS — Girls Singles</option>
+                <option value="MD">MD — Boys Doubles</option>
+                <option value="WD">WD — Girls Doubles</option>
+                <option value="XD">XD — Mixed Doubles</option>
+              </select></label>
+              <label><span>Category / Age</span><select value={draw.category_code} onChange={e=>setDraw({...draw,category_code:e.target.value,player_ids:[]})}>{categoryOptions.map(c=><option key={c}>{c}</option>)}</select></label>
+              <label className="check setup-seed"><input type="checkbox" checked={draw.seed_by_rank} onChange={e=>setDraw({...draw,seed_by_rank:e.target.checked})}/> Seed the first round by ranking</label>
             </div>
             <div className="participant-head"><b>Attending players</b><span>{draw.player_ids.length} selected</span></div>
             <div className="participant-actions"><button type="button" className="mini" onClick={()=>setDraw(x=>({...x,player_ids:candidates.map(p=>p.id)}))}>Select all shown</button><button type="button" className="mini" onClick={()=>setDraw(x=>({...x,player_ids:[]}))}>Clear</button></div>
-            <div className="participant-list">{candidates.map(p=><label className="participant" key={p.id}><input type="checkbox" checked={draw.player_ids.includes(p.id)} onChange={()=>togglePlayer(p.id)}/><span><b>{p.full_name}</b><small>{p.category_code} · Rank #{p.rank_position || '-'} · {p.total_points} pts</small></span></label>)}{!candidates.length&&<div className="empty small">No active players found in this category.</div>}</div>
+            <div className="participant-list">{candidates.map(p=><label className="participant" key={p.id}><input type="checkbox" checked={draw.player_ids.includes(p.id)} onChange={()=>togglePlayer(p.id)}/><span><b>{p.full_name}</b><small>{p.category_code} · {p.gender} · {p.event_type || '—'} · Rank #{p.rank_position || '-'} · {p.total_points} pts</small></span></label>)}{!candidates.length&&<div className="empty small">No active players found in this category.</div>}</div>
             <button className="button" disabled={busy}><Shuffle size={16}/> Generate Round 1 Draw</button>
           </form>
         </div> : <div className="panel round-workspace">
