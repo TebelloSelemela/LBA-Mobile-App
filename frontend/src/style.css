@@ -271,3 +271,33 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
 @media(max-width:1050px){.tournament-setup-grid{grid-template-columns:1fr}.tournament-setup-grid .setup-seed{grid-column:auto}}
 .tournament-fixture .result-entry{margin-top:14px;padding:14px;border:1px solid var(--ui-line);border-radius:16px;background:var(--ui-input)}
 .round-workspace,.tournament-round-history,.audit-history{min-width:0;overflow:hidden}
+
+/* Tournament result-entry hardening */
+.tournament-fixture .result-entry{
+  width:100%;
+  max-width:100%;
+  box-sizing:border-box;
+  overflow:hidden;
+}
+.result-game-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:12px;
+  margin-top:10px;
+}
+.result-game-row>label{
+  min-width:0;
+}
+.result-game-row input{
+  width:100%;
+  min-width:0;
+  box-sizing:border-box;
+}
+.result-entry .helper{
+  overflow-wrap:anywhere;
+}
+@media(max-width:700px){
+  .result-game-row{
+    grid-template-columns:1fr;
+  }
+}
