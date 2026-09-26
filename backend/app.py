@@ -599,8 +599,10 @@ def create_app():
             if tournament_id and not con.execute("SELECT id FROM tournaments WHERE id=?",(tournament_id,)).fetchone():
                 return jsonify({"error":"Tournament not found"}),404
             if tournament_id:
-                existing=con.execute("SELECT id FROM draws WHERE tournament_id=?",(tournament_id,)).fetchone()
-                if existing:return jsonify({"error":"The first tournament draw already exists. Use 'Generate Next Round' after recording results."}),409
+                # A tournament can contain multiple independent event draws (MS, WS, MD, WD, XD).
+                event_key=(event_name or "MS").strip().upper()
+                existing=con.execute("SELECT id FROM draws WHERE tournament_id=? AND round_number=1 AND UPPER(COALESCE(event_name,''))=?",(tournament_id,event_key)).fetchone()
+                if existing:return jsonify({"error":f"A Round 1 draw already exists for {event_key} in this tournament."}),409
             if selected_ids:
                 placeholders=",".join("?" for _ in selected_ids)
                 players=[dict(row) for row in con.execute(f"SELECT * FROM players WHERE status='Active' AND id IN ({placeholders})",selected_ids).fetchall()]
@@ -772,6 +774,10 @@ def create_app():
                 if len(podium["third_players"])==1:
                     podium["third"]=podium["third_players"][0]
             data["podium"]=podium
+            try:
+                data["event_podiums"]=json.loads(data.get("event_podiums") or "{}")
+            except Exception:
+                data["event_podiums"]={}
             data["server_time"]=now_iso()
             data["timezone"]="Africa/Maseru (SAST, UTC+02:00)"
             data["history"]=[dict(x) for x in history]
@@ -815,14 +821,18 @@ def create_app():
             t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
             if not t:return jsonify({"error":"Tournament not found"}),404
             if t["status"]=="Completed": return jsonify({"error":"Tournament is already finished."}),400
-            latest=con.execute("SELECT * FROM draws WHERE tournament_id=? ORDER BY round_number DESC,id DESC LIMIT 1",(tournament_id,)).fetchone()
-            if not latest:return jsonify({"error":"Generate the first tournament draw before creating the next round."}),400
+            requested_event=(data.get("event_name") or "").strip().upper()
+            if requested_event:
+                latest=con.execute("SELECT * FROM draws WHERE tournament_id=? AND UPPER(COALESCE(event_name,''))=? ORDER BY round_number DESC,id DESC LIMIT 1",(tournament_id,requested_event)).fetchone()
+            else:
+                latest=con.execute("SELECT * FROM draws WHERE tournament_id=? ORDER BY round_number DESC,id DESC LIMIT 1",(tournament_id,)).fetchone()
+            if not latest:return jsonify({"error":"Generate the first draw for this event before creating the next round."}),400
             pending=con.execute("""SELECT COUNT(*) FROM draw_matches WHERE draw_id=? AND status!='Completed'""",(latest["id"],)).fetchone()[0]
             if pending:
                 return jsonify({"error":f"Round {latest['round_number']} still has {pending} unfinished match(es). Record every result before creating the next round."}),400
 
-            existing=con.execute("SELECT id FROM draws WHERE tournament_id=? AND round_number>?",(tournament_id,latest["round_number"])).fetchone()
-            if existing:return jsonify({"error":"The next round has already been generated."}),409
+            existing=con.execute("SELECT id FROM draws WHERE tournament_id=? AND UPPER(COALESCE(event_name,''))=? AND round_number>?",(tournament_id,(latest["event_name"] or requested_event or "MS").upper(),latest["round_number"])).fetchone()
+            if existing:return jsonify({"error":"The next round for this event has already been generated."}),409
 
             matches=con.execute("SELECT * FROM draw_matches WHERE draw_id=? ORDER BY match_no",(latest["id"],)).fetchall()
             winners=[]
@@ -894,59 +904,46 @@ def create_app():
         with db() as con:
             t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
             if not t:return jsonify({"error":"Tournament not found"}),404
-            final=con.execute("""
-                SELECT dm.* FROM draw_matches dm
-                JOIN draws d ON d.id=dm.draw_id
-                WHERE d.tournament_id=? AND d.stage='Final' AND dm.status='Completed'
-                ORDER BY d.round_number DESC,dm.id DESC LIMIT 1
-            """,(tournament_id,)).fetchone()
-            if not final:return jsonify({"error":"The final has not been completed yet."}),400
+            if t["status"]=="Completed": return jsonify(dict(t))
 
-            third=con.execute("""
-                SELECT dm.* FROM draw_matches dm
-                JOIN draws d ON d.id=dm.draw_id
-                WHERE d.tournament_id=? AND d.stage='Final + Third Place' AND dm.match_no=3
-                  AND dm.status='Completed'
-                ORDER BY d.round_number DESC,dm.id DESC LIMIT 1
-            """,(tournament_id,)).fetchone()
-            # Fallback: a three-to-five-player bracket can have a single semifinal;
-            # its loser is treated as third place when no bronze match exists.
-            third_name=third["winner"] if third else None
-            if not third_name:
-                # Small brackets (3-6 entrants) can have a single real semifinal.
-                # In that case the semifinal loser is the third-place finisher.
-                semis=con.execute("""
-                    SELECT dm.* FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
-                    WHERE d.tournament_id=? AND d.stage='Semifinal' AND dm.status='Completed' AND dm.side_b!='Bye'
-                    ORDER BY d.round_number DESC,dm.id
-                """,(tournament_id,)).fetchall()
-                if len(semis)==1:
-                    s=semis[0]
-                    third_name=s["side_b"] if s["winner"]==s["side_a"] else s["side_a"]
-            if not third_name:
-                # For a three-player bracket, the only real first-round match
-                # produces the third-place finisher.
-                early=con.execute("""
-                    SELECT dm.* FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
-                    WHERE d.tournament_id=? AND d.stage NOT IN ('Final','Semifinal')
-                      AND dm.status='Completed' AND dm.side_b!='Bye'
-                    ORDER BY d.round_number DESC,dm.id
-                """,(tournament_id,)).fetchall()
-                if len(early)==1:
-                    s=early[0]
-                    third_name=s["side_b"] if s["winner"]==s["side_a"] else s["side_a"]
+            event_rows=con.execute("SELECT DISTINCT COALESCE(NULLIF(event_name,''),'MS') AS event_name FROM draws WHERE tournament_id=? ORDER BY event_name",(tournament_id,)).fetchall()
+            if not event_rows:return jsonify({"error":"Generate at least one event draw before finishing the tournament."}),400
 
-            runner=final["side_b"] if final["winner"]==final["side_a"] else final["side_a"]
-            # Do not automatically finish when the last match is entered: the
-            # administrator explicitly declares completion.
-            con.execute("""UPDATE tournaments SET status='Completed',winner_name=?,runner_up_name=?,third_place_name=?,finished_by=?,finished_at=?,updated_at=? WHERE id=?""",
-                        (final["winner"],runner,third_name,g.current_user["username"],now,now,tournament_id))
-            detail=json.dumps({"first":final["winner"],"second":runner,"third":third_name},separators=(",",":"))
-            con.execute("INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at) VALUES(?,?,?,?,?)",
-                        (tournament_id,g.current_user["username"],"TOURNAMENT_FINISHED",detail,now))
+            event_podiums={}
+            missing=[]
+            for er in event_rows:
+                event_name=er["event_name"]
+                final=con.execute("SELECT dm.* FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? AND UPPER(COALESCE(d.event_name,'MS'))=? AND d.stage='Final' AND dm.status='Completed' ORDER BY d.round_number DESC,dm.id DESC LIMIT 1",(tournament_id,event_name.upper())).fetchone()
+                if not final:
+                    missing.append(event_name)
+                    continue
+
+                third=con.execute("SELECT dm.* FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? AND UPPER(COALESCE(d.event_name,'MS'))=? AND d.stage='Final + Third Place' AND dm.match_no=3 AND dm.status='Completed' ORDER BY d.round_number DESC,dm.id DESC LIMIT 1",(tournament_id,event_name.upper())).fetchone()
+                third_name=third["winner"] if third else None
+
+                if not third_name:
+                    semis=con.execute("SELECT dm.* FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? AND UPPER(COALESCE(d.event_name,'MS'))=? AND d.stage='Semifinal' AND dm.status='Completed' AND dm.side_b!='Bye' ORDER BY d.round_number DESC,dm.id",(tournament_id,event_name.upper())).fetchall()
+                    if len(semis)==1:
+                        s=semis[0]
+                        third_name=s["side_b"] if s["winner"]==s["side_a"] else s["side_a"]
+                    elif len(semis)>=2:
+                        losers=[s["side_b"] if s["winner"]==s["side_a"] else s["side_a"] for s in semis[:2]]
+                        third_name=" & ".join([z for z in losers if z])
+
+                runner=final["side_b"] if final["winner"]==final["side_a"] else final["side_a"]
+                event_podiums[event_name]={"first":final["winner"],"second":runner,"third":third_name}
+
+            if missing:
+                return jsonify({"error":"Every event draw must have a completed final before the tournament can be declared finished.","events_pending":missing,"completed_events":sorted(event_podiums.keys())}),400
+
+            legacy_first=next(iter(event_podiums.values()))["first"] if len(event_podiums)==1 else "See event podiums"
+            legacy_second=next(iter(event_podiums.values()))["second"] if len(event_podiums)==1 else "See event podiums"
+            legacy_third=next(iter(event_podiums.values()))["third"] if len(event_podiums)==1 else "See event podiums"
+            con.execute("UPDATE tournaments SET status='Completed',winner_name=?,runner_up_name=?,third_place_name=?,event_podiums=?,finished_by=?,finished_at=?,updated_at=? WHERE id=?",(legacy_first,legacy_second,legacy_third,json.dumps(event_podiums,separators=(",",":")),g.current_user["username"],now,now,tournament_id))
+            con.execute("INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at) VALUES(?,?,?,?,?)",(tournament_id,g.current_user["username"],"TOURNAMENT_FINISHED",json.dumps({"event_podiums":event_podiums},separators=(",",":")),now))
             con.commit()
             row=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
-        return jsonify(dict(row))
+        return jsonify({**dict(row),"event_podiums":event_podiums})
 
     @app.route("/api/matches/<int:match_id>", methods=["GET"])
     @require_auth
@@ -1241,7 +1238,8 @@ def ensure_database():
             runner_up_name TEXT,
             third_place_name TEXT,
             finished_by TEXT,
-            finished_at TEXT
+            finished_at TEXT,
+            event_podiums TEXT
         );
         CREATE TABLE IF NOT EXISTS match_games (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1343,6 +1341,7 @@ def ensure_database():
             ("tournaments", "third_place_name", "TEXT"),
             ("tournaments", "finished_by", "TEXT"),
             ("tournaments", "finished_at", "TEXT"),
+            ("tournaments", "event_podiums", "TEXT"),
             ("draws", "round_number", "INTEGER DEFAULT 1"),
             ("draws", "stage", "TEXT"),
             ("draws", "created_by", "TEXT"),
