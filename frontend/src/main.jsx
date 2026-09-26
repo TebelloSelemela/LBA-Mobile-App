@@ -983,15 +983,19 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
         {tournaments.filter(t => t.status === 'Completed').map(t => {
           const h=historyDetails[t.id];
           const p=h?.podium || {};
+          const ep=h?.event_podiums || {};
           const thirdPlayers=p.third_players || (p.third ? [p.third] : []);
           return <button className="history-card" key={'history-card-'+t.id} onClick={()=>setSelectedId(t.id)}>
             <div className="history-card-title"><b>{t.name}</b><span>{t.venue || 'Venue not recorded'}</span></div>
-            <div className="history-card-grid">
+            {Object.keys(ep).length ? <div className="history-event-summary">
+              {Object.entries(ep).map(([event,podium])=><div key={event}><b>{event}</b><span>1st: {podium.first || '—'}</span><span>2nd: {podium.second || '—'}</span><span>3rd: {podium.third || '—'}</span></div>)}
+            </div> : <div className="history-card-grid">
               <div><small>1st Place</small><strong>{p.first || '—'}</strong></div>
               <div><small>2nd Place</small><strong>{p.second || '—'}</strong></div>
               <div><small>3rd Place</small><strong>{thirdPlayers.length ? thirdPlayers.join(' & ') : '—'}</strong></div>
               <div><small>Date</small><strong>{t.start_date || (h?.finished_at ? formatLbaTime(h.finished_at).split(',')[0] : '—')}</strong></div>
-            </div>
+            </div>}
+            <small className="history-date">{t.start_date || (h?.finished_at ? formatLbaTime(h.finished_at).split(',')[0] : '—')}</small>
           </button>;
         })}
         {!tournaments.some(t => t.status === 'Completed') && <div className="empty small">Completed tournaments will appear here.</div>}
