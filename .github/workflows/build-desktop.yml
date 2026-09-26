@@ -1,0 +1,33 @@
+name: Build LBA Desktop App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build Windows desktop app
+        env:
+          VITE_API_BASE: https://lba-backend-production.up.railway.app/api
+        run: npm run desktop:build
+      - name: Upload Windows portable app
+        uses: actions/upload-artifact@v4
+        with:
+          name: lba-desktop-windows
+          path: frontend/dist-electron/*.exe
+          if-no-files-found: error
