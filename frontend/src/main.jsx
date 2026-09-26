@@ -860,8 +860,10 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
 
   async function saveResult(matchId) {
     const used = games
+      .map(g => ({a:String(g.a ?? '').trim(), b:String(g.b ?? '').trim()}))
       .filter(g => g.a !== '' && g.b !== '')
-      .map(g => ({side_a_score:Number(g.a),side_b_score:Number(g.b)}));
+      .map(g => ({side_a_score:Number(g.a),side_b_score:Number(g.b)}))
+      .filter(g => Number.isFinite(g.side_a_score) && Number.isFinite(g.side_b_score));
 
     if (used.length < 2) {
       setMessage('A badminton match needs at least two completed games. Enter Game 1 and Game 2, then Game 3 only if needed.');
@@ -1109,8 +1111,8 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
                     <b>Enter game scores — best of 3</b>
                     {games.map((g,i)=><div className="result-game-row" key={i}><Input label={'Game '+(i+1)+' · Player A'} type="number" min="0" max="30" step="1" value={g.a} onChange={v=>{setResultDirty(true);setGames(gs=>gs.map((x,j)=>j===i?{...x,a:v}:x))}}/><Input label={'Game '+(i+1)+' · Player B'} type="number" min="0" max="30" step="1" value={g.b} onChange={v=>{setResultDirty(true);setGames(gs=>gs.map((x,j)=>j===i?{...x,b:v}:x))}}/></div>)}
                     <small className="helper">Badminton scoring: 21-point games, win by 2 after 20-all, with 30 as the maximum.</small>
-                    <button type="button" className={resultDirty ? "button result-save-button" : "button"} onClick={()=>saveResult(m.id)} disabled={busy || !resultDirty}>
-                      {busy ? 'Saving…' : resultDirty ? 'Save' : 'Record Results'}
+                    <button type="button" className="button result-save-button" onClick={()=>saveResult(m.id)} disabled={busy}>
+                      {busy ? 'Saving…' : 'Save Result'}
                     </button>
                   </div>}
                 </div>;
