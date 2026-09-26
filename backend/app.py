@@ -918,7 +918,7 @@ def create_app():
                     missing.append(event_name)
                     continue
 
-                third=con.execute("SELECT dm.* FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? AND UPPER(COALESCE(d.event_name,'MS'))=? AND d.stage='Final + Third Place' AND dm.match_no=3 AND dm.status='Completed' ORDER BY d.round_number DESC,dm.id DESC LIMIT 1",(tournament_id,event_name.upper())).fetchone()
+                third=con.execute("SELECT dm.* FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? AND UPPER(COALESCE(d.event_name,'MS'))=? AND d.stage='Final' AND dm.match_no=3 AND dm.status='Completed' ORDER BY d.round_number DESC,dm.id DESC LIMIT 1",(tournament_id,event_name.upper())).fetchone()
                 third_name=third["winner"] if third else None
 
                 if not third_name:
