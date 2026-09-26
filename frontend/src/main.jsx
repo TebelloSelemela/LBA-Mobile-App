@@ -822,7 +822,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     try {
       const next = await api('/tournaments/'+selectedId+'/next-round', {
         method:'POST',
-        body:JSON.stringify({event_name:draw.event_name,draw_type:draw.draw_type})
+        body:JSON.stringify({event_name:selectedEvent,draw_type:draw.draw_type})
       });
       await load(selectedId);
       await refresh();
@@ -892,7 +892,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       await refresh();
 
       const updatedRounds = {};
-      (updated?.matches || []).forEach(m => {
+      (updated?.matches || []).filter(m => (m.event_name || 'MS').toUpperCase() === selectedEvent).forEach(m => {
         const rn=Number(m.round_number || 1);
         if (!updatedRounds[rn]) updatedRounds[rn]=[];
         updatedRounds[rn].push(m);
@@ -902,7 +902,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       const latestRn=roundNumbers[roundNumbers.length-1];
       const latestMatches=updatedRounds[latestRn] || [];
       const latestDrawStage=latestMatches[0]?.stage || '';
-      const nextAlreadyExists=(updated?.matches || []).some(m => Number(m.round_number || 1) > latestRn);
+      const nextAlreadyExists=(updated?.matches || []).some(m => (m.event_name || 'MS').toUpperCase() === selectedEvent && Number(m.round_number || 1) > latestRn);
 
       if (latestMatches.length && latestMatches.every(m => m.status === 'Completed') && latestDrawStage !== 'Final' && !nextAlreadyExists) {
         await generateNextRound(true);
@@ -1014,13 +1014,17 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           </div>
         </div>
 
-        {(podium.first || podium.second || podium.third) && <div className="podium-card">
-          <div className="podium-title"><Trophy size={20}/> Tournament Podium</div>
-          <div className="podium-grid">
+        {(Object.keys(eventPodiums).length || podium.first || podium.second || podium.third) > 0 && <div className="podium-card">
+          <div className="podium-title"><Trophy size={20}/> Event Podiums</div>
+          {Object.keys(eventPodiums).length > 0 ? <div className="event-podium-list">
+            {Object.entries(eventPodiums).map(([event,p])=><div className="event-podium-row" key={event}>
+              <strong>{event}</strong><span>1st: <b>{p.first || '—'}</b></span><span>2nd: <b>{p.second || '—'}</b></span><span>3rd: <b>{p.third || '—'}</b></span>
+            </div>)}
+          </div> : <div className="podium-grid">
             <div><span>1st</span><b>{podium.first || '—'}</b></div>
             <div><span>2nd</span><b>{podium.second || '—'}</b></div>
             <div><span>3rd</span><b>{podium.third || '—'}</b></div>
-          </div>
+          </div>}
           {detail.finished_at && <small>Declared finished by {detail.finished_by || 'admin'} on {formatLbaTime(detail.finished_at)}</small>}
         </div>}
 
