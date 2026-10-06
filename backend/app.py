@@ -979,30 +979,49 @@ def create_app():
             if a>b:a_wins+=1
             else:b_wins+=1
             if a_wins==2 or b_wins==2:break
-        if max(a_wins,b_wins)<2:return jsonify({"error":"A match is best of three games; record enough games to reach two game wins."}),400
+        # A completed game can be saved immediately while the match is still
+        # in progress. The match becomes Completed only when one side reaches
+        # two game wins.
+        completed=max(a_wins,b_wins)>=2
+        status="Completed" if completed else "In Progress"
 
         now=now_iso()
         with db() as con:
-            m=con.execute("SELECT dm.*,d.tournament_id,d.event_name,d.round_name,d.title,d.stage,t.name AS tournament_name FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id LEFT JOIN tournaments t ON t.id=d.tournament_id WHERE dm.id=?",(match_id,)).fetchone()
+            m=con.execute("SELECT dm.*,d.tournament_id,d.event_name,d.round_name,d.round_number,d.title,d.stage,t.name AS tournament_name FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id LEFT JOIN tournaments t ON t.id=d.tournament_id WHERE dm.id=?",(match_id,)).fetchone()
             if not m:return jsonify({"error":"Match not found"}),404
             if m["side_b"]=="Bye":return jsonify({"error":"A bye does not require a result."}),400
             previous=con.execute("SELECT game_number,side_a_score,side_b_score FROM match_games WHERE match_id=? ORDER BY game_number",(match_id,)).fetchall()
             con.execute("DELETE FROM match_games WHERE match_id=?",(match_id,))
             for n,a,b in games:
                 con.execute("INSERT INTO match_games(match_id,game_number,side_a_score,side_b_score,created_at,updated_at) VALUES(?,?,?,?,?,?)",(match_id,n,a,b,now,now))
-            winner=m["side_a"] if a_wins>b_wins else m["side_b"]
-            con.execute("""UPDATE draw_matches SET winner=?,status='Completed',result_entered_by=?,result_entered_at=COALESCE(result_entered_at,?),result_updated_at=? WHERE id=?""",
-                        (winner,g.current_user["username"],now,now,match_id))
-            action="RESULT_UPDATED" if previous else "RESULT_RECORDED"
-            detail=json.dumps({"previous":[dict(x) for x in previous],"games":[{"game":n,"a":a,"b":b} for n,a,b in games],"winner":winner},separators=(",",":"))
+            winner=(m["side_a"] if a_wins>b_wins else m["side_b"]) if completed else None
+
+            # Once a later round has been generated, the feeder winner is
+            # locked. Scores may still be corrected as long as the winner does
+            # not change, protecting the bracket path already in use.
+            if m["tournament_id"] and m["status"]=="Completed":
+                later=con.execute("""SELECT 1 FROM draws
+                                     WHERE tournament_id=?
+                                       AND UPPER(COALESCE(event_name,'MS'))=UPPER(?)
+                                       AND round_number>?
+                                     LIMIT 1""",
+                                  (m["tournament_id"],m["event_name"] or "MS",m["round_number"] or 1)).fetchone()
+                invalidates_path=(status!="Completed") or (winner and m["winner"] and winner!=m["winner"])
+                if later and invalidates_path:
+                    return jsonify({"error":"This result already feeds a later-round match. You may correct the score only if the winner stays the same."}),409
+
+            con.execute("""UPDATE draw_matches SET winner=?,status=?,result_entered_by=?,result_entered_at=COALESCE(result_entered_at,?),result_updated_at=? WHERE id=?""",
+                        (winner,status,g.current_user["username"],now,now,match_id))
+            action=("RESULT_UPDATED" if previous else "RESULT_RECORDED") if completed else "LIVE_SCORE_UPDATED"
+            detail=json.dumps({"previous":[dict(x) for x in previous],"games":[{"game":n,"a":a,"b":b} for n,a,b in games],"winner":winner,"status":status},separators=(",",":"))
             con.execute("INSERT INTO tournament_audit(tournament_id,match_id,actor,action,details,created_at) VALUES(?,?,?,?,?,?)",
                         (m["tournament_id"],match_id,g.current_user["username"],action,detail,now))
             con.execute("INSERT INTO audit_logs(actor,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
-                        (g.current_user["username"],action,"draw_matches",match_id,f"{m['side_a']} vs {m['side_b']} -> {winner}",now))
+                        (g.current_user["username"],action,"draw_matches",match_id,f"{m['side_a']} vs {m['side_b']} -> {winner or status}",now))
             if m["tournament_id"]:
                 con.execute("UPDATE tournaments SET status='Live',updated_at=? WHERE id=? AND status!='Completed'",(now,m["tournament_id"]))
             con.commit()
-            result={"match_id":match_id,"winner":winner,"games":[{"game_number":n,"side_a_score":a,"side_b_score":b} for n,a,b in games],"games_won":{"side_a":a_wins,"side_b":b_wins},"status":"Completed","recorded_by":g.current_user["username"],"recorded_at":now}
+            result={"match_id":match_id,"winner":winner,"games":[{"game_number":n,"side_a_score":a,"side_b_score":b} for n,a,b in games],"games_won":{"side_a":a_wins,"side_b":b_wins},"status":status,"recorded_by":g.current_user["username"],"recorded_at":now}
         return jsonify(result)
 
     @app.route("/api/tournaments/<int:tournament_id>/scoresheets.pdf")
