@@ -1093,6 +1093,31 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             </div>
           </div>
 
+          <div className="live-bracket">
+            <div className="live-bracket-head">
+              <div><span className="eyebrow">LIVE DRAW PATH</span><h3>{selectedEvent} Knockout Bracket</h3></div>
+              <small>Results update here as matches progress. Winners keep their fixed path to the next round.</small>
+            </div>
+            <div className="bracket-scroll">
+              <div className="bracket-columns">
+                {rounds.map(round => <div className="bracket-column" key={'bracket-'+round.number}>
+                  <div className="bracket-column-title"><b>{round.stage}</b><span>{round.matches.filter(m=>m.status==='Completed').length}/{round.matches.length}</span></div>
+                  <div className="bracket-column-matches">
+                    {round.matches.map(m => {
+                      const scores=m.games?.length ? m.games.map(g=>g.side_a_score+'-'+g.side_b_score).join(' · ') : '';
+                      return <div className={'bracket-match '+(m.status==='Completed'?'complete':'standby')} key={'path-'+m.id}>
+                        <small>{m.match_code || ('M'+m.match_no)} · {m.status==='Completed' ? 'RESULT' : 'STANDBY'}</small>
+                        <div className={m.winner===m.side_a?'winner':''}><span>{m.side_a}</span>{m.winner===m.side_a&&<b>✓</b>}</div>
+                        <div className={m.winner===m.side_b?'winner':''}><span>{m.side_b}</span>{m.winner===m.side_b&&<b>✓</b>}</div>
+                        {scores&&<em>{scores}</em>}
+                      </div>;
+                    })}
+                  </div>
+                </div>)}
+              </div>
+            </div>
+          </div>
+
           {rounds.map(round => <section className="round-section" key={round.number}>
             <div className="round-heading"><div><span className="eyebrow">ROUND {round.number}</span><h3>{round.stage}</h3></div><span className={round.matches.every(m=>m.status==='Completed') ? 'badge green' : 'badge'}>{round.matches.filter(m=>m.status==='Completed').length}/{round.matches.length} complete</span></div>
             <div className="fixtures">
@@ -1105,7 +1130,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
                 return <div className="fixture tournament-fixture" key={m.id}>
                   <small>{m.match_code || ('Match '+m.match_no)} · {label}{courtText}</small>
                   <div><b>{m.side_a}</b><span>VS</span><b>{m.side_b}</b></div>
-                  {m.status === 'Completed' ? <div className="helper"><CheckCircle2 size={15}/> {m.winner}{scoreText}{recordedText}</div> :
+                  {m.status === 'Completed' ? <div className="result-complete-row"><div className="helper"><CheckCircle2 size={15}/> {m.winner}{scoreText}{recordedText}</div><button className="mini" onClick={()=>startResult(m)}>Edit Result</button></div> :
                     <button className="mini" onClick={()=>startResult(m)}>Record Result</button>}
                   {openResult === m.id && <div className="form result-entry">
                     <b>Enter game scores — best of 3</b>
