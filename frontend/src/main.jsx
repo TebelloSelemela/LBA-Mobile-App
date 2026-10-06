@@ -795,7 +795,13 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       if (!map.has(rn)) map.set(rn, { number: rn, stage: m.stage || m.draw_round || ('Round '+rn), matches: [] });
       map.get(rn).matches.push(m);
     });
-    return [...map.values()].sort((a,b) => a.number-b.number);
+    const ordered=[...map.values()].sort((a,b) => a.number-b.number);
+    const firstCount=(ordered[0]?.matches || []).filter(m => !(m.stage==='Final' && m.match_no===3)).length;
+    const stageForSlots = slots => ({2:'Final',4:'Semifinal',8:'Quarterfinal',16:'Round of 16',32:'Round of 32',64:'Round of 64',128:'Round of 128'}[slots] || ('Round of '+slots));
+    return ordered.map((round,index) => {
+      const expected=Math.max(1,Math.floor(firstCount/(2**index)));
+      return {...round,stage:firstCount ? stageForSlots(expected*2) : round.stage};
+    });
   }, [detail, selectedEvent]);
 
   const latestRound = rounds[rounds.length-1];
