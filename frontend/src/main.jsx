@@ -596,39 +596,6 @@ function Draws({ draws, drawForm, setDrawForm, generateDraw, categoryOptions, dr
   const [selected, setSelected] = useState(null);
   const selectedSet = new Set(drawForm.player_ids || []);
   const allVisibleIds = drawCandidates.map(player => player.id);
-  function startTournamentResize(e) {
-    if (window.innerWidth <= 980) return;
-    e.preventDefault();
-    const container=e.currentTarget.parentElement;
-    const rect=container.getBoundingClientRect();
-    const move=ev => {
-      const pct=((ev.clientX-rect.left)/rect.width)*100;
-      const next=Math.max(24,Math.min(46,pct));
-      setSplitPct(next);
-      localStorage.setItem('lba_tournament_split',String(next));
-    };
-    const stop=() => {
-      window.removeEventListener('pointermove',move);
-      window.removeEventListener('pointerup',stop);
-    };
-    window.addEventListener('pointermove',move);
-    window.addEventListener('pointerup',stop);
-  }
-
-  function fitBracket() {
-    if (!bracketGeometry) return;
-    window.requestAnimationFrame(() => {
-      const scroller=document.querySelector('.tournament-detail-panel .bracket-scroll');
-      if (!scroller) return;
-      const available=Math.max(320,scroller.clientWidth-10);
-      setBracketZoom(Math.max(0.5,Math.min(1.25,available/bracketGeometry.width)));
-    });
-  }
-
-  function changeBracketZoom(delta) {
-    setBracketZoom(z => Math.max(0.5,Math.min(1.5,Math.round((z+delta)*10)/10)));
-  }
-
   function togglePlayer(id) {
     setDrawForm(current => {
       const ids = new Set(current.player_ids || []);
@@ -876,6 +843,48 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     });
     return {colWidth,gap,unit,cardHeight,topOffset,width,height,cardPosition,paths};
   }, [bracketModel]);
+
+  function startTournamentResize(e) {
+    if (window.innerWidth <= 980) return;
+    e.preventDefault();
+    const container=e.currentTarget?.parentElement;
+    if (!container) return;
+    const rect=container.getBoundingClientRect();
+
+    const move=ev => {
+      const pct=((ev.clientX-rect.left)/rect.width)*100;
+      const next=Math.max(24,Math.min(46,pct));
+      setSplitPct(next);
+      localStorage.setItem('lba_tournament_split',String(next));
+    };
+
+    const stop=() => {
+      window.removeEventListener('pointermove',move);
+      window.removeEventListener('pointerup',stop);
+      document.body.style.cursor='';
+      document.body.style.userSelect='';
+    };
+
+    document.body.style.cursor='col-resize';
+    document.body.style.userSelect='none';
+    window.addEventListener('pointermove',move);
+    window.addEventListener('pointerup',stop);
+  }
+
+  function fitBracket() {
+    if (!bracketGeometry) return;
+    window.requestAnimationFrame(() => {
+      const scroller=document.querySelector('.tournament-detail-panel .bracket-scroll');
+      if (!scroller) return;
+      const available=Math.max(280,scroller.clientWidth-24);
+      const next=Math.max(0.5,Math.min(1.5,available/bracketGeometry.width));
+      setBracketZoom(Math.round(next*100)/100);
+    });
+  }
+
+  function changeBracketZoom(delta) {
+    setBracketZoom(z => Math.max(0.5,Math.min(1.5,Math.round((z+delta)*10)/10)));
+  }
 
   function togglePlayer(id) {
     setDraw(x => {
