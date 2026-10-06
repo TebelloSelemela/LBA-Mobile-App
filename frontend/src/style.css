@@ -369,3 +369,26 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;
   gap:12px!important;
 }
+
+
+/* Live knockout bracket: fixed match paths with horizontal round progression */
+.live-bracket{margin:18px 0 22px;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--panel)}
+.live-bracket-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:14px}
+.live-bracket-head h3{margin:3px 0 0}.live-bracket-head small{max-width:520px;opacity:.78}
+.bracket-scroll{overflow-x:auto;padding:4px 2px 12px}
+.bracket-columns{display:flex;gap:28px;align-items:stretch;min-width:max-content}
+.bracket-column{width:255px;display:flex;flex-direction:column}
+.bracket-column-title{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;margin-bottom:10px;border-bottom:2px solid currentColor}
+.bracket-column-title span{font-size:12px;opacity:.7}
+.bracket-column-matches{display:flex;flex:1;flex-direction:column;justify-content:space-around;gap:14px}
+.bracket-match{position:relative;border:1px solid var(--border);border-radius:10px;padding:9px;background:var(--card, var(--panel));min-height:88px}
+.bracket-match:after{content:"";position:absolute;right:-29px;top:50%;width:28px;border-top:1px solid var(--border)}
+.bracket-column:last-child .bracket-match:after{display:none}
+.bracket-match>small{display:block;font-size:10px;font-weight:800;letter-spacing:.06em;margin-bottom:5px;opacity:.7}
+.bracket-match>div{display:flex;justify-content:space-between;gap:8px;padding:4px 6px;border-radius:6px;font-weight:700}
+.bracket-match>div+div{border-top:1px solid var(--border)}
+.bracket-match .winner{font-weight:900;background:rgba(34,197,94,.12)}
+.bracket-match em{display:block;margin-top:5px;font-size:11px;font-style:normal;opacity:.8}
+.bracket-match.standby{border-style:dashed}.bracket-match.complete{border-style:solid}
+.result-complete-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+@media(max-width:700px){.live-bracket-head{align-items:flex-start;flex-direction:column}.bracket-column{width:220px}}
