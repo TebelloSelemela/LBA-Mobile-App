@@ -616,12 +616,13 @@ def create_app():
             else:
                 import random; random.shuffle(players)
 
-            slots=1
-            while slots < len(players): slots*=2
-            if len(players)==2: stage="Final"
-            else: stage={2:"Final",4:"Semifinal",8:"Quarterfinal",16:"Round of 16",32:"Round of 32",64:"Round of 64"}.get(slots,f"Round of {slots}")
+            fixtures=build_fixtures(players,draw_type)
+            if not fixtures:
+                return jsonify({"error":"This event needs at least two complete entrants/teams. Doubles requires complete pairs."}),400
+            slots=len(fixtures)*2
+            stage={2:"Final",4:"Semifinal",8:"Quarterfinal",16:"Round of 16",32:"Round of 32",64:"Round of 64"}.get(slots,f"Round of {slots}")
             round_name=stage
-            fixtures=build_fixtures(players,draw_type); now=now_iso()
+            now=now_iso()
             cur=con.execute("""INSERT INTO draws(title,category_code,draw_type,created_at,tournament_id,event_name,round_name,round_number,stage,created_by)
                                VALUES(?,?,?,?,?,?,?,?,?,?)""",
                             (title,category,draw_type,now,tournament_id,event_name,round_name,1,stage,g.current_user["username"]))
@@ -860,8 +861,8 @@ def create_app():
             event_name=data.get("event_name") or latest["event_name"] or "Singles"
             draw_type=data.get("draw_type") or latest["draw_type"] or "Singles"
 
-            import random
-            random.shuffle(winners)
+            # Preserve bracket paths: M1/M2 feed the first next-round
+            # match, M3/M4 feed the second, and so on. Never reshuffle winners.
             fixtures=[]
             for i in range(0,len(winners),2):
                 a=winners[i]
@@ -1468,25 +1469,57 @@ def infer_age_group(category):
 
 
 def build_fixtures(players, draw_type):
-    fixtures = []
+    """Build a true power-of-two knockout bracket.
+
+    Every entrant gets a fixed path through the draw. When the entrant count is
+    not a power of two, byes are assigned in Round 1 instead of changing the
+    bracket shape. This keeps Quarterfinal -> Semifinal -> Final paths stable.
+    """
     if draw_type.lower() == "doubles":
-        pairs = []
+        entrants = []
         for i in range(0, len(players), 2):
             a = players[i]
             b = players[i + 1] if i + 1 < len(players) else None
-            name = f"{a['full_name']} / {b['full_name']}" if b else f"{a['full_name']} / Waiting partner"
-            ids = f"{a['id']},{b['id']}" if b else f"{a['id']}"
-            pairs.append({"name": name, "ids": ids})
-        for i in range(0, len(pairs), 2):
-            a = pairs[i]
-            b = pairs[i + 1] if i + 1 < len(pairs) else {"name": "Bye", "ids": ""}
-            fixtures.append({"match_no": len(fixtures) + 1, "side_a": a["name"], "side_b": b["name"], "side_a_player_ids": a["ids"], "side_b_player_ids": b["ids"]})
-        return fixtures
+            if not b:
+                # Do not create a fake one-player doubles team.
+                continue
+            entrants.append({
+                "name": f"{a['full_name']} / {b['full_name']}",
+                "ids": f"{a['id']},{b['id']}"
+            })
+    else:
+        entrants = [{"name": p["full_name"], "ids": str(p["id"])} for p in players]
 
-    for i in range(0, len(players), 2):
-        a = players[i]
-        b = players[i + 1] if i + 1 < len(players) else {"full_name": "Bye", "id": ""}
-        fixtures.append({"match_no": len(fixtures) + 1, "side_a": a["full_name"], "side_b": b["full_name"], "side_a_player_ids": str(a["id"]), "side_b_player_ids": str(b["id"])})
+    if len(entrants) < 2:
+        return []
+
+    slots = 1
+    while slots < len(entrants):
+        slots *= 2
+    bye_count = slots - len(entrants)
+
+    # Put each bye against a real entrant first, then pair the remaining
+    # entrants. This prevents Bye-vs-Bye fixtures and preserves a full bracket.
+    fixture_pairs = []
+    cursor = 0
+    for _ in range(bye_count):
+        fixture_pairs.append((entrants[cursor], {"name": "Bye", "ids": ""}))
+        cursor += 1
+    while cursor < len(entrants):
+        a = entrants[cursor]
+        b = entrants[cursor + 1]
+        fixture_pairs.append((a, b))
+        cursor += 2
+
+    fixtures = []
+    for a, b in fixture_pairs:
+        fixtures.append({
+            "match_no": len(fixtures) + 1,
+            "side_a": a["name"],
+            "side_b": b["name"],
+            "side_a_player_ids": a["ids"],
+            "side_b_player_ids": b["ids"]
+        })
     return fixtures
 
 
