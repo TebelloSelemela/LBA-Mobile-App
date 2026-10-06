@@ -21,10 +21,11 @@ from flask_cors import CORS
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, A3, A2, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.pdfgen import canvas as pdfcanvas
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_DB = BASE_DIR.parent / "database" / "lba_rankings.db"
@@ -670,13 +671,60 @@ def create_app():
             if not draw:
                 return jsonify({"error": "Draw not found"}), 404
 
-        pdf_bytes = build_draw_pdf(draw)
-        filename = safe_filename(f"{draw['title'] or 'lba_draw'}_{draw['id']}.pdf")
+            if draw.get("tournament_id"):
+                tournament=con.execute("SELECT * FROM tournaments WHERE id=?",(draw["tournament_id"],)).fetchone()
+                event_name=(draw.get("event_name") or "MS").upper()
+                cutoff=int(draw.get("round_number") or 1)
+                rows=con.execute("""SELECT dm.*,d.event_name,d.round_name,d.round_number,d.stage,d.draw_type,d.category_code
+                                    FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
+                                    WHERE d.tournament_id=? AND UPPER(COALESCE(d.event_name,'MS'))=? AND d.round_number<=?
+                                    ORDER BY d.round_number,dm.match_no,dm.id""",
+                                 (draw["tournament_id"],event_name,cutoff)).fetchall()
+                matches=[]
+                for row in rows:
+                    item=dict(row)
+                    item["games"]=[dict(gm) for gm in con.execute("SELECT game_number,side_a_score,side_b_score FROM match_games WHERE match_id=? ORDER BY game_number",(row["id"],)).fetchall()]
+                    matches.append(item)
+                pdf_bytes=build_progressive_bracket_pdf(dict(tournament),event_name,matches,cutoff_round=cutoff)
+                stage=_bracket_stage(max(2,len([m for m in matches if int(m.get("round_number") or 1)==1])*2))
+                filename=safe_filename(f"{tournament['name']}_{event_name}_{draw.get('stage') or draw.get('round_name') or stage}_draw.pdf")
+            else:
+                pdf_bytes = build_draw_pdf(draw)
+                filename = safe_filename(f"{draw['title'] or 'lba_draw'}_{draw['id']}.pdf")
+
         return Response(
             pdf_bytes,
             mimetype="application/pdf",
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
+
+    @app.route("/api/tournaments/<int:tournament_id>/bracket.pdf")
+    @require_auth
+    def export_tournament_bracket(tournament_id):
+        event_name=(request.args.get("event") or "MS").strip().upper()
+        requested_round=nullable_int(request.args.get("round"))
+        with db() as con:
+            tournament=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+            if not tournament:
+                return jsonify({"error":"Tournament not found"}),404
+            rows=con.execute("""SELECT dm.*,d.event_name,d.round_name,d.round_number,d.stage,d.draw_type,d.category_code
+                                FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
+                                WHERE d.tournament_id=? AND UPPER(COALESCE(d.event_name,'MS'))=?
+                                ORDER BY d.round_number,dm.match_no,dm.id""",
+                             (tournament_id,event_name)).fetchall()
+            if not rows:
+                return jsonify({"error":f"No {event_name} draw exists in this tournament."}),404
+            matches=[]
+            for row in rows:
+                item=dict(row)
+                item["games"]=[dict(gm) for gm in con.execute("SELECT game_number,side_a_score,side_b_score FROM match_games WHERE match_id=? ORDER BY game_number",(row["id"],)).fetchall()]
+                matches.append(item)
+            latest=max(int(m.get("round_number") or 1) for m in matches)
+            cutoff=max(1,min(requested_round or latest,latest))
+            pdf_bytes=build_progressive_bracket_pdf(dict(tournament),event_name,matches,cutoff_round=cutoff)
+            stage=_bracket_stage(max(2,len([m for m in matches if int(m.get("round_number") or 1)==cutoff])*2))
+            filename=safe_filename(f"{tournament['name']}_{event_name}_{stage}_draw.pdf")
+        return Response(pdf_bytes,mimetype="application/pdf",headers={"Content-Disposition":f"attachment; filename={filename}"})
 
     @app.route("/api/tournaments", methods=["GET"])
     @require_auth
@@ -1681,6 +1729,228 @@ def build_draw_pdf(draw):
     story.append(Paragraph("Prepared by LBA Admin System. Keep this file as the official draw record for the tournament.", small))
 
     doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+
+def _bracket_stage(slots):
+    return {
+        2: "Final",
+        4: "Semifinal",
+        8: "Quarterfinal",
+        16: "Round of 16",
+        32: "Round of 32",
+        64: "Round of 64",
+        128: "Round of 128",
+    }.get(slots, f"Round of {slots}")
+
+
+def _pdf_fit_text(c, text, font_name, font_size, max_width):
+    value = str(text or "")
+    if c.stringWidth(value, font_name, font_size) <= max_width:
+        return value
+    suffix = "..."
+    while value and c.stringWidth(value + suffix, font_name, font_size) > max_width:
+        value = value[:-1]
+    return (value + suffix) if value else suffix
+
+
+def build_progressive_bracket_pdf(tournament, event_name, matches, cutoff_round=None):
+    """Export a category/event as a true progressive knockout bracket.
+
+    Actual rounds are filled through cutoff_round. All later rounds remain
+    visible as empty standby paths so officials can export a fresh sheet after
+    each newly generated round without changing the bracket structure.
+    """
+    event_name = (event_name or "MS").upper()
+    filtered = [
+        dict(m) for m in (matches or [])
+        if (m.get("event_name") or "MS").upper() == event_name
+        and not (m.get("stage") == "Final" and int(m.get("match_no") or 0) == 3)
+    ]
+    if not filtered:
+        raise ValueError(f"No matches found for {event_name}.")
+
+    first_round = sorted(
+        [m for m in filtered if int(m.get("round_number") or 1) == 1],
+        key=lambda m: (int(m.get("match_no") or 0), int(m.get("id") or 0))
+    )
+    first_count = len(first_round)
+    if first_count < 1:
+        raise ValueError("The event does not contain a first-round draw.")
+
+    total_rounds = 1
+    count = first_count
+    while count > 1:
+        total_rounds += 1
+        count = max(1, count // 2)
+
+    available_rounds = [int(m.get("round_number") or 1) for m in filtered]
+    latest_round = max(available_rounds) if available_rounds else 1
+    cutoff_round = max(1, min(int(cutoff_round or latest_round), total_rounds))
+
+    rounds = []
+    for round_index in range(total_rounds):
+        round_number = round_index + 1
+        expected = max(1, first_count // (2 ** round_index))
+        actual = sorted(
+            [
+                m for m in filtered
+                if int(m.get("round_number") or 1) == round_number
+                and round_number <= cutoff_round
+            ],
+            key=lambda m: (int(m.get("match_no") or 0), int(m.get("id") or 0))
+        )
+        stage = _bracket_stage(expected * 2)
+        items = []
+        for i in range(expected):
+            if i < len(actual):
+                item = dict(actual[i])
+                item["virtual"] = False
+            else:
+                item = {
+                    "id": f"standby-{round_number}-{i + 1}",
+                    "match_no": i + 1,
+                    "match_code": f"STANDBY-{round_number}-{i + 1}",
+                    "side_a": "",
+                    "side_b": "",
+                    "winner": None,
+                    "status": "Standby",
+                    "games": [],
+                    "virtual": True,
+                }
+            items.append(item)
+        rounds.append({"number": round_number, "stage": stage, "matches": items})
+
+    page_size = landscape(A2 if first_count > 16 else A3)
+    page_w, page_h = page_size
+    buffer = io.BytesIO()
+    c = pdfcanvas.Canvas(buffer, pagesize=page_size)
+    c.setTitle(f"{tournament.get('name','LBA Tournament')} - {event_name} Progressive Draw")
+
+    navy = colors.HexColor("#0f172a")
+    green = colors.HexColor("#047857")
+    green_light = colors.HexColor("#d1fae5")
+    line = colors.HexColor("#64748b")
+    border = colors.HexColor("#94a3b8")
+    muted = colors.HexColor("#475569")
+    standby = colors.HexColor("#f8fafc")
+
+    margin = 24
+    footer_h = 22
+    header_h = 88
+    content_top = page_h - header_h
+    usable_h = content_top - footer_h - 10
+    gap = 30
+    col_w = (page_w - (2 * margin) - (gap * (total_rounds - 1))) / total_rounds
+    row_unit = usable_h / first_count
+    card_h = min(38, max(20, row_unit * 0.74))
+
+    # Header
+    logo_x = margin
+    if LOGO_PATH.exists():
+        try:
+            c.drawImage(str(LOGO_PATH), logo_x, page_h - 68, width=44, height=44, preserveAspectRatio=True, mask="auto")
+            logo_x += 54
+        except Exception:
+            pass
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(logo_x, page_h - 33, "Lesotho Badminton Association")
+    c.setFont("Helvetica-Bold", 12)
+    c.setFillColor(green)
+    c.drawString(logo_x, page_h - 51, "Official Progressive Tournament Draw")
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawRightString(page_w - margin, page_h - 31, str(tournament.get("name") or "Tournament"))
+    c.setFont("Helvetica", 8.5)
+    c.setFillColor(muted)
+    latest_stage = rounds[cutoff_round - 1]["stage"]
+    meta = f"{event_name}  |  {tournament.get('venue') or 'Venue not recorded'}  |  Filled through: {latest_stage}"
+    c.drawRightString(page_w - margin, page_h - 47, meta)
+    date_text = tournament.get("start_date") or tournament.get("created_at") or ""
+    c.drawRightString(page_w - margin, page_h - 61, f"Date: {date_text or '-'}")
+    c.setStrokeColor(border)
+    c.setLineWidth(0.7)
+    c.line(margin, page_h - 72, page_w - margin, page_h - 72)
+
+    def card_position(round_index, match_index):
+        center = content_top - ((match_index + 0.5) * (2 ** round_index) * row_unit)
+        x = margin + round_index * (col_w + gap)
+        y = center - card_h / 2
+        return x, y, center
+
+    # Connectors first so cards sit cleanly on top.
+    c.setStrokeColor(line)
+    c.setLineWidth(0.8)
+    for r in range(total_rounds - 1):
+        for i in range(len(rounds[r]["matches"])):
+            x1, _, y1 = card_position(r, i)
+            x2, _, y2 = card_position(r + 1, i // 2)
+            start_x = x1 + col_w
+            end_x = x2
+            mid_x = start_x + gap / 2
+            c.line(start_x, y1, mid_x, y1)
+            c.line(mid_x, y1, mid_x, y2)
+            c.line(mid_x, y2, end_x, y2)
+
+    # Column headings and match cards.
+    for r, round_data in enumerate(rounds):
+        x = margin + r * (col_w + gap)
+        c.setFillColor(navy)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawCentredString(x + col_w / 2, content_top + 7, round_data["stage"].upper())
+        c.setStrokeColor(green)
+        c.setLineWidth(1.4)
+        c.line(x, content_top + 1, x + col_w, content_top + 1)
+
+        for i, m in enumerate(round_data["matches"]):
+            x, y, _ = card_position(r, i)
+            is_virtual = bool(m.get("virtual"))
+            c.setFillColor(standby if is_virtual else colors.white)
+            c.setStrokeColor(border if is_virtual else navy)
+            c.setLineWidth(0.65 if is_virtual else 0.9)
+            c.roundRect(x, y, col_w, card_h, 5, fill=1, stroke=1)
+
+            status = str(m.get("status") or "Pending")
+            status_color = green if status == "Completed" else (colors.HexColor("#d97706") if status == "In Progress" else muted)
+            c.setFillColor(status_color)
+            c.setFont("Helvetica-Bold", 5.8 if first_count > 16 else 6.5)
+            code = str(m.get("match_code") or f"M{m.get('match_no') or i + 1}")
+            label = "STANDBY" if is_virtual else ("LIVE" if status == "In Progress" else ("RESULT" if status == "Completed" else "READY"))
+            c.drawString(x + 5, y + card_h - 8, _pdf_fit_text(c, f"{code} - {label}", "Helvetica-Bold", 6.5, col_w - 10))
+
+            text_size = 6.2 if first_count > 16 else 7.4
+            side_a = str(m.get("side_a") or "")
+            side_b = str(m.get("side_b") or "")
+            winner = str(m.get("winner") or "")
+            row1_y = y + card_h * 0.56
+            row2_y = y + card_h * 0.25
+            for name, py in [(side_a, row1_y), (side_b, row2_y)]:
+                is_winner = bool(winner and name and name == winner)
+                c.setFillColor(green if is_winner else navy)
+                c.setFont("Helvetica-Bold" if is_winner else "Helvetica", text_size)
+                fitted = _pdf_fit_text(c, name, "Helvetica-Bold" if is_winner else "Helvetica", text_size, col_w - 12)
+                c.drawString(x + 6, py, fitted)
+                if is_winner:
+                    c.setFont("Helvetica-Bold", text_size)
+                    c.drawRightString(x + col_w - 6, py, "W")
+
+            games = m.get("games") or []
+            if games and card_h >= 30:
+                score = "  ".join(f"{g.get('side_a_score')}-{g.get('side_b_score')}" for g in games)
+                c.setFillColor(muted)
+                c.setFont("Helvetica", 5.8)
+                c.drawRightString(x + col_w - 5, y + 4, _pdf_fit_text(c, score, "Helvetica", 5.8, col_w * 0.55))
+
+    # Footer
+    c.setFillColor(muted)
+    c.setFont("Helvetica", 7)
+    c.drawString(margin, 9, f"{event_name} bracket snapshot - filled through {latest_stage}. Future rounds remain on standby.")
+    c.drawRightString(page_w - margin, 9, "Generated by LBA Tournament System")
+    c.showPage()
+    c.save()
     buffer.seek(0)
     return buffer.getvalue()
 
