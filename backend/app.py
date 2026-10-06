@@ -686,8 +686,10 @@ def create_app():
                     item["games"]=[dict(gm) for gm in con.execute("SELECT game_number,side_a_score,side_b_score FROM match_games WHERE match_id=? ORDER BY game_number",(row["id"],)).fetchall()]
                     matches.append(item)
                 pdf_bytes=build_progressive_bracket_pdf(dict(tournament),event_name,matches,cutoff_round=cutoff)
-                stage=_bracket_stage(max(2,len([m for m in matches if int(m.get("round_number") or 1)==1])*2))
-                filename=safe_filename(f"{tournament['name']}_{event_name}_{draw.get('stage') or draw.get('round_name') or stage}_draw.pdf")
+                first_count=len([m for m in matches if int(m.get("round_number") or 1)==1 and not (m.get("stage")=="Final" and int(m.get("match_no") or 0)==3)])
+                expected=max(1, first_count // (2 ** max(0, cutoff - 1)))
+                stage=_bracket_stage(expected * 2)
+                filename=safe_filename(f"{tournament['name']}_{event_name}_{stage}_draw.pdf")
             else:
                 pdf_bytes = build_draw_pdf(draw)
                 filename = safe_filename(f"{draw['title'] or 'lba_draw'}_{draw['id']}.pdf")
