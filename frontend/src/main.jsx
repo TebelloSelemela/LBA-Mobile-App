@@ -596,6 +596,39 @@ function Draws({ draws, drawForm, setDrawForm, generateDraw, categoryOptions, dr
   const [selected, setSelected] = useState(null);
   const selectedSet = new Set(drawForm.player_ids || []);
   const allVisibleIds = drawCandidates.map(player => player.id);
+  function startTournamentResize(e) {
+    if (window.innerWidth <= 980) return;
+    e.preventDefault();
+    const container=e.currentTarget.parentElement;
+    const rect=container.getBoundingClientRect();
+    const move=ev => {
+      const pct=((ev.clientX-rect.left)/rect.width)*100;
+      const next=Math.max(24,Math.min(46,pct));
+      setSplitPct(next);
+      localStorage.setItem('lba_tournament_split',String(next));
+    };
+    const stop=() => {
+      window.removeEventListener('pointermove',move);
+      window.removeEventListener('pointerup',stop);
+    };
+    window.addEventListener('pointermove',move);
+    window.addEventListener('pointerup',stop);
+  }
+
+  function fitBracket() {
+    if (!bracketGeometry) return;
+    window.requestAnimationFrame(() => {
+      const scroller=document.querySelector('.tournament-detail-panel .bracket-scroll');
+      if (!scroller) return;
+      const available=Math.max(320,scroller.clientWidth-10);
+      setBracketZoom(Math.max(0.5,Math.min(1.25,available/bracketGeometry.width)));
+    });
+  }
+
+  function changeBracketZoom(delta) {
+    setBracketZoom(z => Math.max(0.5,Math.min(1.5,Math.round((z+delta)*10)/10)));
+  }
+
   function togglePlayer(id) {
     setDrawForm(current => {
       const ids = new Set(current.player_ids || []);
@@ -655,7 +688,7 @@ function DrawMatches({ draw }) {
         <b>{currentDraw.title}</b>
         <small>{currentDraw.category_code} · {currentDraw.draw_type} · {matches.length} match(es)</small>
       </div>
-      <button className="button secondary" onClick={exportDrawPdf}><FileText size={16}/> Export Draw PDF</button>
+      <button className="button secondary" onClick={exportDrawPdf}><FileText size={16}/> {currentDraw.tournament_id ? 'Export Bracket PDF' : 'Export Draw PDF'}</button>
     </div>
     {pdfMessage && <div className="helper">{pdfMessage}</div>}
     {matches.map(m => <div className="fixture" key={m.id}><small>Match {m.match_no}</small><div><b>{m.side_a}</b><span>VS</span><b>{m.side_b}</b></div></div>)}
@@ -685,6 +718,12 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const [games, setGames] = useState([{a:'',b:''},{a:'',b:''},{a:'',b:''}]);
   const [busy, setBusy] = useState(false);
   const [historyDetails, setHistoryDetails] = useState({});
+  const [bracketZoom, setBracketZoom] = useState(1);
+  const [showCreate, setShowCreate] = useState(tournaments.length === 0);
+  const [splitPct, setSplitPct] = useState(() => {
+    const saved=Number(localStorage.getItem('lba_tournament_split') || 32);
+    return Number.isFinite(saved) ? Math.max(24,Math.min(46,saved)) : 32;
+  });
 
   async function load(id=selectedId) {
     if (!id) { setDetail(null); return null; }
@@ -698,6 +737,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     }
   }
 
+  useEffect(() => { if (!selectedId && tournaments.length) setSelectedId(tournaments[0].id); }, [tournaments, selectedId]);
   useEffect(() => { if (selectedId) load(selectedId); }, [selectedId]);
   useEffect(() => {
     // Keep the user's selected event even when that event has no draw yet.
@@ -760,7 +800,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
 
   const latestRound = rounds[rounds.length-1];
   const latestRoundComplete = !!latestRound && latestRound.matches.length > 0 && latestRound.matches.every(m => m.status === 'Completed');
-  const hasLaterRound = rounds.length > 1;
+  const selectedEventMatches = useMemo(() => (detail?.matches || []).filter(m => (m.event_name || 'MS').toUpperCase() === selectedEvent), [detail, selectedEvent]);
   const finalMatch = (detail?.matches || []).find(m => (m.event_name || 'MS').toUpperCase() === selectedEvent && m.stage === 'Final' && m.match_no !== 3);
   const thirdMatch = (detail?.matches || []).find(m => (m.event_name || 'MS').toUpperCase() === selectedEvent && m.stage === 'Final' && m.match_no === 3);
   const eventReadiness = useMemo(() => {
@@ -788,7 +828,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       const expectedMatches = Math.max(1, Math.floor(firstCount / (2 ** r)));
       const actualRound = rounds.find(x => Number(x.number) === r + 1);
       const actualMatches = (actualRound?.matches || []).filter(m => !(m.stage === 'Final' && m.match_no === 3));
-      const stage = actualRound?.stage || stageForSlots(expectedMatches * 2);
+      const stage = stageForSlots(expectedMatches * 2);
       const matches = Array.from({length: expectedMatches}, (_,i) => {
         if (actualMatches[i]) return {...actualMatches[i], virtual:false};
         return {
@@ -848,7 +888,8 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       setForm({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft'});
       await refresh();
       setSelectedId(t.id);
-      setMessage('Tournament created. Select the attending players to generate Round 1.');
+      setShowCreate(false);
+      setMessage('Tournament created. Select the event and attending players to generate its draw.');
     } catch (e) { setMessage(e.message); }
     finally { setBusy(false); }
   }
@@ -1008,23 +1049,26 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     } catch (e) { setMessage(e.message); }
   }
 
-  return <section className="grid two">
-    <div className="panel">
-      <div className="section-head">
+  return <section className="tournament-layout" style={{'--tournament-left':splitPct+'%'}}>
+    <div className="panel tournament-list-panel">
+      <div className="section-head tournament-manager-head">
         <div><span className="eyebrow">TOURNAMENT MANAGEMENT</span><h3>Tournaments</h3></div>
-        <CalendarDays size={22}/>
+        <div className="quick-actions">
+          <button type="button" className="mini" onClick={()=>setShowCreate(v=>!v)}><Plus size={14}/> {showCreate ? 'Close' : 'New Tournament'}</button>
+          <CalendarDays size={22}/>
+        </div>
       </div>
 
-      <form className="form" onSubmit={createTournament}>
+      {showCreate && <form className="form tournament-create-form" onSubmit={createTournament}>
         <Input label="Tournament name" value={form.name} onChange={v=>setForm({...form,name:v})}/>
         <Input label="Tournament code (optional)" value={form.tournament_code} onChange={v=>setForm({...form,tournament_code:v})}/>
         <Input label="Venue" value={form.venue} onChange={v=>setForm({...form,venue:v})}/>
-        <div className="grid two">
+        <div className="form-row">
           <Input label="Start date" type="date" value={form.start_date} onChange={v=>setForm({...form,start_date:v})}/>
           <Input label="End date" type="date" value={form.end_date} onChange={v=>setForm({...form,end_date:v})}/>
         </div>
         <button className="button" disabled={busy}><Plus size={16}/> Create Tournament</button>
-      </form>
+      </form>}
 
       <div className="draw-list">
         {tournaments.map(t=>
@@ -1064,7 +1108,9 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       </div>
     </div>
 
-    <div className="panel wide">
+    <div className="tournament-resizer" role="separator" aria-label="Resize tournament list and draw workspace" onPointerDown={startTournamentResize}><span/></div>
+
+    <div className="panel wide tournament-detail-panel">
       {!detail ? <div className="empty"><Trophy size={32}/><h3>Select a tournament</h3><p>Create a tournament on the left, then generate Round 1 and enter results here.</p></div> :
       <>
         <div className="section-head">
@@ -1075,7 +1121,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             <small className="server-clock">System time: {formatLbaTime(detail.server_time)} · Lesotho / SAST (UTC+02:00)</small>
           </div>
           <div className="quick-actions">
-            <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/scoresheets.pdf',detail.tournament_code+'_scoresheets.pdf')}><ClipboardList size={16}/> Scoresheets</button>
+            <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/scoresheets.pdf',detail.tournament_code+'_scoresheets.pdf')}><ClipboardList size={16}/> Match Scoresheets</button>
             <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/export.xlsx',detail.tournament_code+'_tournament.xlsx')}><Download size={16}/> Full Tournament Excel</button>
           </div>
         </div>
@@ -1094,11 +1140,11 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           {detail.finished_at && <small>Declared finished by {detail.finished_by || 'admin'} on {formatLbaTime(detail.finished_at)}</small>}
         </div>}
 
-        <div className="stats">
-          <Stat label="Rounds" value={rounds.length}/>
-          <Stat label="Matches" value={(detail.matches || []).length}/>
-          <Stat label="Completed" value={(detail.matches || []).filter(m=>m.status==='Completed').length}/>
-          <Stat label="Pending" value={(detail.matches || []).filter(m=>m.status!=='Completed').length}/>
+        <div className="stats tournament-event-stats">
+          <Stat label={selectedEvent+" Rounds"} value={rounds.length}/>
+          <Stat label={selectedEvent+" Matches"} value={selectedEventMatches.length}/>
+          <Stat label="Completed" value={selectedEventMatches.filter(m=>m.status==='Completed').length}/>
+          <Stat label="Pending / Live" value={selectedEventMatches.filter(m=>m.status!=='Completed').length}/>
         </div>
 
         <div className="tournament-event-bar">
@@ -1141,20 +1187,31 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           </form>
         </div> : <div className="panel round-workspace">
           <div className="round-action-bar">
-            <div><b>Knockout progression</b><small>Complete a round and the winners are automatically carried into the next round.</small></div>
+            <div>
+              <b>{selectedEvent} knockout progression</b>
+              <small>{latestRound ? 'Latest generated round: '+latestRound.stage+'. ' : ''}Record results live; completed winners follow the fixed bracket path.</small>
+            </div>
             <div className="quick-actions">
-              {latestRoundComplete && !hasLaterRound && latestRound?.stage !== 'Final' && <button className="button secondary" disabled={busy} onClick={()=>generateNextRound(false)}><Shuffle size={16}/> Generate Next Round</button>}
+              <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/bracket.pdf?event='+encodeURIComponent(selectedEvent),detail.tournament_code+'_'+selectedEvent+'_'+(latestRound?.stage || 'draw').replaceAll(' ','_')+'_draw.pdf')}><FileText size={16}/> Export {selectedEvent} Draw</button>
+              {latestRoundComplete && latestRound?.stage !== 'Final' && <button className="button secondary" disabled={busy} onClick={()=>generateNextRound(false)}><Shuffle size={16}/> Generate Next Round</button>}
               {readyToFinish && detail.status !== 'Completed' && <button className="button" disabled={busy} onClick={finishTournament}><Trophy size={16}/> Declare Tournament Finished</button>}
             </div>
           </div>
 
           <div className="live-bracket">
             <div className="live-bracket-head">
-              <div><span className="eyebrow">LIVE DRAW PATH</span><h3>{selectedEvent} Knockout Bracket</h3></div>
-              <small>The complete path is visible from the first round to the final. Unplayed future matches remain on standby until their feeder matches are decided.</small>
+              <div><span className="eyebrow">LIVE DRAW PATH</span><h3>{selectedEvent} Knockout Bracket</h3><small>Filled through {latestRound?.stage || 'the current draw'}; future matches remain on standby.</small></div>
+              <div className="bracket-view-tools">
+                <button type="button" className="mini" onClick={()=>changeBracketZoom(-0.1)} disabled={bracketZoom<=0.5}>−</button>
+                <b>{Math.round(bracketZoom*100)}%</b>
+                <button type="button" className="mini" onClick={()=>changeBracketZoom(0.1)} disabled={bracketZoom>=1.5}>+</button>
+                <button type="button" className="mini" onClick={fitBracket}>Fit</button>
+                <button type="button" className="mini" onClick={()=>setBracketZoom(1)}>100%</button>
+              </div>
             </div>
             {bracketModel && bracketGeometry && <div className="bracket-scroll">
-              <div className="bracket-canvas" style={{width:bracketGeometry.width,height:bracketGeometry.height}}>
+              <div className="bracket-zoom-shell" style={{width:bracketGeometry.width*bracketZoom,height:bracketGeometry.height*bracketZoom}}>
+              <div className="bracket-canvas" style={{width:bracketGeometry.width,height:bracketGeometry.height,transform:'scale('+bracketZoom+')',transformOrigin:'top left'}}>
                 <svg className="bracket-connectors" width={bracketGeometry.width} height={bracketGeometry.height} viewBox={'0 0 '+bracketGeometry.width+' '+bracketGeometry.height} aria-hidden="true">
                   {bracketGeometry.paths.map(p=><path key={p.key} d={p.d}/>)}
                 </svg>
@@ -1178,6 +1235,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
                     })}
                   </React.Fragment>;
                 })}
+              </div>
               </div>
             </div>}
           </div>
