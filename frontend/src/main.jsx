@@ -776,6 +776,61 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const podium = detail?.podium || {};
   const eventPodiums = detail?.event_podiums || {};
 
+  const bracketModel = useMemo(() => {
+    if (!eventHasDraw || !rounds.length || !rounds[0]?.matches?.length) return null;
+    const firstCount = rounds[0].matches.filter(m => !(m.stage === 'Final' && m.match_no === 3)).length;
+    if (!firstCount) return null;
+    const totalRounds = Math.floor(Math.log2(firstCount)) + 1;
+    const stageForSlots = slots => ({2:'Final',4:'Semifinal',8:'Quarterfinal',16:'Round of 16',32:'Round of 32',64:'Round of 64'}[slots] || ('Round of '+slots));
+    const columns = [];
+
+    for (let r=0; r<totalRounds; r++) {
+      const expectedMatches = Math.max(1, Math.floor(firstCount / (2 ** r)));
+      const actualRound = rounds.find(x => Number(x.number) === r + 1);
+      const actualMatches = (actualRound?.matches || []).filter(m => !(m.stage === 'Final' && m.match_no === 3));
+      const stage = actualRound?.stage || stageForSlots(expectedMatches * 2);
+      const matches = Array.from({length: expectedMatches}, (_,i) => {
+        if (actualMatches[i]) return {...actualMatches[i], virtual:false};
+        return {
+          id:'standby-'+selectedEvent+'-'+r+'-'+i,
+          match_no:i+1,
+          match_code:'STANDBY '+(i+1),
+          side_a:'Winner of previous match '+(i*2+1),
+          side_b:'Winner of previous match '+(i*2+2),
+          status:'Standby',
+          winner:null,
+          games:[],
+          virtual:true
+        };
+      });
+      columns.push({number:r+1,stage,matches});
+    }
+    return {firstCount,columns};
+  }, [eventHasDraw, rounds, selectedEvent]);
+
+  const bracketGeometry = useMemo(() => {
+    if (!bracketModel) return null;
+    const colWidth=250, gap=82, unit=122, cardHeight=92, topOffset=52;
+    const width=bracketModel.columns.length*colWidth + Math.max(0,bracketModel.columns.length-1)*gap;
+    const height=Math.max(150,bracketModel.firstCount*unit) + topOffset;
+    const cardPosition=(roundIndex,matchIndex) => {
+      const center=topOffset + (matchIndex + 0.5) * (2 ** roundIndex) * unit;
+      return {x:roundIndex*(colWidth+gap), y:center-cardHeight/2, center};
+    };
+    const paths=[];
+    bracketModel.columns.slice(0,-1).forEach((column,r) => {
+      column.matches.forEach((_,i) => {
+        const from=cardPosition(r,i);
+        const to=cardPosition(r+1,Math.floor(i/2));
+        const x1=from.x+colWidth;
+        const x2=to.x;
+        const mid=x1+gap/2;
+        paths.push({key:r+'-'+i,d:'M '+x1+' '+from.center+' H '+mid+' V '+to.center+' H '+x2});
+      });
+    });
+    return {colWidth,gap,unit,cardHeight,topOffset,width,height,cardPosition,paths};
+  }, [bracketModel]);
+
   function togglePlayer(id) {
     setDraw(x => {
       const ids = new Set(x.player_ids);
@@ -809,7 +864,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
         body:JSON.stringify({
           title: draw.title,
           category_code: draw.category_code,
-          draw_type: draw.draw_type,
+          draw_type: ['MD','WD','XD'].includes(selectedEvent) ? 'Doubles' : 'Singles',
           event_name: selectedEvent,
           seed_by_rank: draw.seed_by_rank,
           player_ids: draw.player_ids
@@ -828,7 +883,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     try {
       const next = await api('/tournaments/'+selectedId+'/next-round', {
         method:'POST',
-        body:JSON.stringify({event_name:selectedEvent,draw_type:draw.draw_type})
+        body:JSON.stringify({event_name:selectedEvent,draw_type:['MD','WD','XD'].includes(selectedEvent) ? 'Doubles' : 'Singles'})
       });
       await load(selectedId);
       await refresh();
@@ -859,25 +914,24 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   }, [games, openResult]);
 
   async function saveResult(matchId) {
-    const used = games
-      .map(g => ({a:String(g.a ?? '').trim(), b:String(g.b ?? '').trim()}))
+    const raw = games.map(g => ({a:String(g.a ?? '').trim(), b:String(g.b ?? '').trim()}));
+    if (raw.some(g => (g.a === '') !== (g.b === ''))) {
+      setMessage('Enter both Player A and Player B scores for each game you want to save.');
+      return;
+    }
+    const firstEmpty = raw.findIndex(g => g.a === '' && g.b === '');
+    if (firstEmpty >= 0 && raw.slice(firstEmpty + 1).some(g => g.a !== '' || g.b !== '')) {
+      setMessage('Enter game scores in order: Game 1, then Game 2, then Game 3 if required.');
+      return;
+    }
+
+    const used = raw
       .filter(g => g.a !== '' && g.b !== '')
       .map(g => ({side_a_score:Number(g.a),side_b_score:Number(g.b)}))
       .filter(g => Number.isFinite(g.side_a_score) && Number.isFinite(g.side_b_score));
 
-    if (used.length < 2) {
-      setMessage('A badminton match needs at least two completed games. Enter Game 1 and Game 2, then Game 3 only if needed.');
-      return;
-    }
-
-    const game1Winner = used[0].side_a_score > used[0].side_b_score ? 'A' : 'B';
-    const game2Winner = used[1].side_a_score > used[1].side_b_score ? 'A' : 'B';
-    if (game1Winner === game2Winner && used.length > 2) {
-      setMessage('The match is already decided after two games. Remove Game 3 or leave it blank.');
-      return;
-    }
-    if (game1Winner !== game2Winner && used.length < 3) {
-      setMessage('The first two games are split. Enter Game 3 to decide the match.');
+    if (!used.length) {
+      setMessage('Enter at least one completed game before saving the live result.');
       return;
     }
 
@@ -888,16 +942,16 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
         body:JSON.stringify({games:used})
       });
 
-      // Do not close the result editor until the server has confirmed the
-      // match as Completed.
-      if (!saved || saved.status !== 'Completed' || !saved.winner) {
-        throw new Error('The server did not confirm the match result as completed.');
-      }
-
       setOpenResult(null);
       setResultDirty(false);
       const updated = await load(selectedId);
       await refresh();
+
+      if (saved?.status !== 'Completed') {
+        setMessage('Live score saved. This match remains in progress and can be continued after the next game.');
+        return;
+      }
+      if (!saved.winner) throw new Error('The server marked the match complete without a winner.');
 
       const updatedRounds = {};
       (updated?.matches || []).filter(m => (m.event_name || 'MS').toUpperCase() === selectedEvent).forEach(m => {
@@ -914,7 +968,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
 
       if (latestMatches.length && latestMatches.every(m => m.status === 'Completed') && latestDrawStage !== 'Final' && !nextAlreadyExists) {
         await generateNextRound(true);
-        setMessage('Match result saved. All winners have advanced to the next round.');
+        setMessage('Result completed. The round is finished and the winners have advanced along their fixed bracket paths.');
       } else {
         setMessage(saved.winner+' won the match. Result saved successfully.');
       }
@@ -1056,7 +1110,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           <div className="event-tabs">
             {eventOptions.map(event => {
               const exists=(detail?.draws || []).some(d => (d.event_name || 'MS').toUpperCase()===event);
-              return <button key={event} type="button" className={selectedEvent===event ? 'event-tab active' : 'event-tab'} onClick={()=>{setSelectedEvent(event);setDraw(d=>({...d,event_name:event,player_ids:[],title:detail.name+' — '+event}));}}>
+              return <button key={event} type="button" className={selectedEvent===event ? 'event-tab active' : 'event-tab'} onClick={()=>{setSelectedEvent(event);setDraw(d=>({...d,event_name:event,draw_type:['MD','WD','XD'].includes(event)?'Doubles':'Singles',player_ids:[],title:detail.name+' — '+event}));}}>
                 <b>{event}</b><span>{exists ? 'Draw created' : 'Add draw'}</span>
               </button>;
             })}
@@ -1069,7 +1123,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           <form className="form" onSubmit={generateTournamentDraw}>
             <div className="tournament-setup-grid">
               <Input label="Draw title" value={draw.title} onChange={v=>setDraw({...draw,title:v})}/>
-              <label><span>Event</span><select value={selectedEvent} onChange={e=>{const event=e.target.value;setSelectedEvent(event);setDraw({...draw,event_name:event,player_ids:[],title:detail.name+' — '+event});}}>
+              <label><span>Event</span><select value={selectedEvent} onChange={e=>{const event=e.target.value;setSelectedEvent(event);setDraw({...draw,event_name:event,draw_type:['MD','WD','XD'].includes(event)?'Doubles':'Singles',player_ids:[],title:detail.name+' — '+event});}}>
                 <option value="MS">MS — Boys Singles</option>
                 <option value="WS">WS — Girls Singles</option>
                 <option value="MD">MD — Boys Doubles</option>
@@ -1080,6 +1134,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
               <label className="check setup-seed"><input type="checkbox" checked={draw.seed_by_rank} onChange={e=>setDraw({...draw,seed_by_rank:e.target.checked})}/> Seed the first round by ranking</label>
             </div>
             <div className="participant-head"><b>Attending players</b><span>{draw.player_ids.length} selected</span></div>
+            {['MD','WD','XD'].includes(selectedEvent) && <p className="helper">Doubles: select partners consecutively. Players 1+2 form Team 1, players 3+4 form Team 2, and so on. Select an even number of players.</p>}
             <div className="participant-actions"><button type="button" className="mini" onClick={()=>setDraw(x=>({...x,player_ids:candidates.map(p=>p.id)}))}>Select all shown</button><button type="button" className="mini" onClick={()=>setDraw(x=>({...x,player_ids:[]}))}>Clear</button></div>
             <div className="participant-list">{candidates.map(p=><label className="participant" key={p.id}><input type="checkbox" checked={draw.player_ids.includes(p.id)} onChange={()=>togglePlayer(p.id)}/><span><b>{p.full_name}</b><small>{p.category_code} · {p.gender} · {p.event_type || '—'} · Rank #{p.rank_position || '-'} · {p.total_points} pts</small></span></label>)}{!candidates.length&&<div className="empty small">No active players found in this category.</div>}</div>
             <button className="button" disabled={busy}><Shuffle size={16}/> Generate Round 1 Draw</button>
@@ -1096,26 +1151,35 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           <div className="live-bracket">
             <div className="live-bracket-head">
               <div><span className="eyebrow">LIVE DRAW PATH</span><h3>{selectedEvent} Knockout Bracket</h3></div>
-              <small>Results update here as matches progress. Winners keep their fixed path to the next round.</small>
+              <small>The complete path is visible from the first round to the final. Unplayed future matches remain on standby until their feeder matches are decided.</small>
             </div>
-            <div className="bracket-scroll">
-              <div className="bracket-columns">
-                {rounds.map(round => <div className="bracket-column" key={'bracket-'+round.number}>
-                  <div className="bracket-column-title"><b>{round.stage}</b><span>{round.matches.filter(m=>m.status==='Completed').length}/{round.matches.length}</span></div>
-                  <div className="bracket-column-matches">
-                    {round.matches.map(m => {
+            {bracketModel && bracketGeometry && <div className="bracket-scroll">
+              <div className="bracket-canvas" style={{width:bracketGeometry.width,height:bracketGeometry.height}}>
+                <svg className="bracket-connectors" width={bracketGeometry.width} height={bracketGeometry.height} viewBox={'0 0 '+bracketGeometry.width+' '+bracketGeometry.height} aria-hidden="true">
+                  {bracketGeometry.paths.map(p=><path key={p.key} d={p.d}/>)}
+                </svg>
+                {bracketModel.columns.map((column,r) => {
+                  const x=r*(bracketGeometry.colWidth+bracketGeometry.gap);
+                  const completed=column.matches.filter(m=>m.status==='Completed').length;
+                  return <React.Fragment key={'bracket-column-'+r}>
+                    <div className="bracket-stage-title" style={{left:x,width:bracketGeometry.colWidth}}>
+                      <b>{column.stage}</b><span>{completed}/{column.matches.length}</span>
+                    </div>
+                    {column.matches.map((m,i) => {
+                      const pos=bracketGeometry.cardPosition(r,i);
                       const scores=m.games?.length ? m.games.map(g=>g.side_a_score+'-'+g.side_b_score).join(' · ') : '';
-                      return <div className={'bracket-match '+(m.status==='Completed'?'complete':'standby')} key={'path-'+m.id}>
-                        <small>{m.match_code || ('M'+m.match_no)} · {m.status==='Completed' ? 'RESULT' : 'STANDBY'}</small>
+                      const state=m.virtual ? 'standby' : (m.status==='Completed' ? 'complete' : (m.status==='In Progress' ? 'progress' : 'pending'));
+                      return <div className={'bracket-match '+state} style={{left:pos.x,top:pos.y,width:bracketGeometry.colWidth}} key={'path-'+m.id}>
+                        <small>{m.match_code || ('M'+m.match_no)} · {m.virtual ? 'STANDBY' : (m.status==='Completed' ? 'RESULT' : (m.status==='In Progress' ? 'LIVE' : 'READY'))}</small>
                         <div className={m.winner===m.side_a?'winner':''}><span>{m.side_a}</span>{m.winner===m.side_a&&<b>✓</b>}</div>
                         <div className={m.winner===m.side_b?'winner':''}><span>{m.side_b}</span>{m.winner===m.side_b&&<b>✓</b>}</div>
                         {scores&&<em>{scores}</em>}
                       </div>;
                     })}
-                  </div>
-                </div>)}
+                  </React.Fragment>;
+                })}
               </div>
-            </div>
+            </div>}
           </div>
 
           {rounds.map(round => <section className="round-section" key={round.number}>
@@ -1131,13 +1195,16 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
                   <small>{m.match_code || ('Match '+m.match_no)} · {label}{courtText}</small>
                   <div><b>{m.side_a}</b><span>VS</span><b>{m.side_b}</b></div>
                   {m.status === 'Completed' ? <div className="result-complete-row"><div className="helper"><CheckCircle2 size={15}/> {m.winner}{scoreText}{recordedText}</div><button className="mini" onClick={()=>startResult(m)}>Edit Result</button></div> :
-                    <button className="mini" onClick={()=>startResult(m)}>Record Result</button>}
+                    <div className="result-live-row">
+                      {m.status === 'In Progress' && <span className="live-score-badge">LIVE · {m.games?.map(g=>g.side_a_score+'-'+g.side_b_score).join(' · ') || 'score saved'}</span>}
+                      <button className="mini" onClick={()=>startResult(m)}>{m.status === 'In Progress' ? 'Continue Result' : 'Record Result'}</button>
+                    </div>}
                   {openResult === m.id && <div className="form result-entry">
                     <b>Enter game scores — best of 3</b>
                     {games.map((g,i)=><div className="result-game-row" key={i}><Input label={'Game '+(i+1)+' · Player A'} type="number" min="0" max="30" step="1" value={g.a} onChange={v=>{setResultDirty(true);setGames(gs=>gs.map((x,j)=>j===i?{...x,a:v}:x))}}/><Input label={'Game '+(i+1)+' · Player B'} type="number" min="0" max="30" step="1" value={g.b} onChange={v=>{setResultDirty(true);setGames(gs=>gs.map((x,j)=>j===i?{...x,b:v}:x))}}/></div>)}
-                    <small className="helper">Badminton scoring: 21-point games, win by 2 after 20-all, with 30 as the maximum.</small>
+                    <small className="helper">Save after each completed game if you are recording the match live. Badminton scoring: 21-point games, win by 2 after 20-all, with 30 as the maximum.</small>
                     <button type="button" className="button result-save-button" onClick={()=>saveResult(m.id)} disabled={busy}>
-                      {busy ? 'Saving…' : 'Save Result'}
+                      {busy ? 'Saving…' : 'Save Live Result'}
                     </button>
                   </div>}
                 </div>;
