@@ -10,7 +10,7 @@ import hashlib
 import json
 import urllib.request
 import urllib.error
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from functools import wraps
@@ -307,7 +307,7 @@ def create_app():
             total = con.execute("SELECT COUNT(*) FROM players").fetchone()[0]
             active = con.execute("SELECT COUNT(*) FROM players WHERE status='Active'").fetchone()[0]
             categories = con.execute("SELECT COUNT(DISTINCT category_code) FROM players WHERE category_code IS NOT NULL AND category_code!=''").fetchone()[0]
-            top = con.execute("SELECT id, full_name, category_code, club, rank_position, total_points FROM players ORDER BY COALESCE(rank_position, 999999), total_points DESC, full_name LIMIT 6").fetchall()
+            top = con.execute("SELECT id, full_name, category_code, club, rank_position, total_points, tournaments_played, age_group FROM players ORDER BY COALESCE(rank_position, 999999), total_points DESC, full_name LIMIT 6").fetchall()
             categories_breakdown = con.execute("""
                 SELECT category_code, event_type, age_group, COUNT(*) AS player_count
                 FROM players WHERE category_code IS NOT NULL AND category_code!=''
@@ -316,6 +316,161 @@ def create_app():
             """).fetchall()
             recent = con.execute("SELECT action, details, created_at FROM audit_logs ORDER BY id DESC LIMIT 6").fetchall()
             draws = con.execute("SELECT COUNT(*) FROM draws").fetchone()[0]
+
+            player_rows = con.execute("""
+                SELECT id,full_name,category_code,club,rank_position,total_points,
+                       tournaments_played,status,age_group,gender
+                FROM players
+                WHERE status='Active'
+            """).fetchall()
+            player_map = {int(row["id"]): dict(row) for row in player_rows}
+
+            # Rising player = largest positive points gain recorded during the
+            # recent 90-day period. ADD_POINTS already stores the before/delta/
+            # after values in the audit trail, so no new ranking workflow is
+            # required.
+            points_gain = {}
+            cutoff = datetime.now(ZoneInfo("Africa/Maseru")) - timedelta(days=90)
+            point_logs = con.execute("""
+                SELECT entity_id,details,created_at
+                FROM audit_logs
+                WHERE action='ADD_POINTS' AND entity='players'
+                ORDER BY id DESC
+            """).fetchall()
+            for log in point_logs:
+                try:
+                    created = datetime.fromisoformat(str(log["created_at"]))
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=ZoneInfo("Africa/Maseru"))
+                    if created < cutoff:
+                        continue
+                except Exception:
+                    pass
+                match = re.search(r"\+\s*(-?\d+(?:\.\d+)?)\s*=", str(log["details"] or ""))
+                if not match:
+                    continue
+                delta = float(match.group(1))
+                if delta <= 0:
+                    continue
+                pid = int(log["entity_id"] or 0)
+                if pid in player_map:
+                    points_gain[pid] = points_gain.get(pid, 0.0) + delta
+
+            rising = None
+            if points_gain:
+                rising_id = max(points_gain, key=lambda pid: (points_gain[pid], float(player_map[pid].get("total_points") or 0)))
+                rising = dict(player_map[rising_id])
+                rising["points_gain_90d"] = round(points_gain[rising_id], 2)
+
+            # In-form player = strongest win rate across recent completed
+            # tournament matches. Team wins are credited to both doubles
+            # partners because draw_matches preserves player IDs for each side.
+            form_stats = {}
+            completed_rows = con.execute("""
+                SELECT dm.side_a_player_ids,dm.side_b_player_ids,dm.side_a,dm.side_b,
+                       dm.winner,dm.result_updated_at,d.event_name,t.name AS tournament_name
+                FROM draw_matches dm
+                JOIN draws d ON d.id=dm.draw_id
+                LEFT JOIN tournaments t ON t.id=d.tournament_id
+                WHERE dm.status='Completed' AND dm.winner IS NOT NULL AND dm.side_b!='Bye'
+                ORDER BY COALESCE(dm.result_updated_at,d.created_at) DESC, dm.id DESC
+                LIMIT 160
+            """).fetchall()
+
+            for match_row in completed_rows:
+                side_a_ids = [int(x) for x in str(match_row["side_a_player_ids"] or "").split(",") if x.strip().isdigit()]
+                side_b_ids = [int(x) for x in str(match_row["side_b_player_ids"] or "").split(",") if x.strip().isdigit()]
+                winner = str(match_row["winner"] or "")
+                winning_ids = side_a_ids if winner == str(match_row["side_a"] or "") else side_b_ids
+                for pid in set(side_a_ids + side_b_ids):
+                    if pid not in player_map:
+                        continue
+                    stat = form_stats.setdefault(pid, {"matches": 0, "wins": 0})
+                    stat["matches"] += 1
+                    if pid in winning_ids:
+                        stat["wins"] += 1
+
+            in_form = None
+            eligible = [
+                (pid, stat) for pid, stat in form_stats.items()
+                if stat["matches"] >= 2
+            ]
+            if eligible:
+                pid, stat = max(
+                    eligible,
+                    key=lambda item: (
+                        item[1]["wins"] / item[1]["matches"],
+                        item[1]["wins"],
+                        item[1]["matches"],
+                        float(player_map[item[0]].get("total_points") or 0),
+                    )
+                )
+                in_form = dict(player_map[pid])
+                in_form["recent_wins"] = stat["wins"]
+                in_form["recent_matches"] = stat["matches"]
+                in_form["win_rate"] = round((stat["wins"] / stat["matches"]) * 100, 1)
+
+            # Exact dates of birth are not stored. The youngest insight is
+            # therefore based only on the age-group field already in records.
+            def age_group_order(value):
+                text = str(value or "").upper().replace(" ", "")
+                match = re.search(r"U(\d{1,2})", text)
+                if match:
+                    return int(match.group(1))
+                if text.startswith("JUNIOR"):
+                    return 17
+                if "18+" in text or text == "18":
+                    return 18
+                return 999
+
+            age_candidates = [p for p in player_map.values() if age_group_order(p.get("age_group")) < 999]
+            youngest = None
+            if age_candidates:
+                age_candidates.sort(key=lambda p: (
+                    age_group_order(p.get("age_group")),
+                    int(p.get("rank_position") or 999999),
+                    -float(p.get("total_points") or 0),
+                    str(p.get("full_name") or ""),
+                ))
+                youngest = dict(age_candidates[0])
+                youngest["age_basis"] = f"{youngest.get('age_group') or 'Youth'} age group"
+
+            most_active = None
+            if player_rows:
+                active_candidate = max(
+                    (dict(p) for p in player_rows),
+                    key=lambda p: (
+                        int(p.get("tournaments_played") or 0),
+                        float(p.get("total_points") or 0),
+                    )
+                )
+                if int(active_candidate.get("tournaments_played") or 0) > 0:
+                    most_active = active_candidate
+
+            tournament_counts = con.execute("""
+                SELECT
+                    COUNT(*) AS total_tournaments,
+                    SUM(CASE WHEN status='Live' THEN 1 ELSE 0 END) AS live_tournaments,
+                    SUM(CASE WHEN status='Completed' THEN 1 ELSE 0 END) AS completed_tournaments
+                FROM tournaments
+            """).fetchone()
+            match_counts = con.execute("""
+                SELECT
+                    COUNT(*) AS total_matches,
+                    SUM(CASE WHEN dm.status='Completed' THEN 1 ELSE 0 END) AS completed_matches,
+                    SUM(CASE WHEN dm.status='In Progress' THEN 1 ELSE 0 END) AS live_matches
+                FROM draw_matches dm
+                JOIN draws d ON d.id=dm.draw_id
+                WHERE d.tournament_id IS NOT NULL
+            """).fetchone()
+            event_count = con.execute("""
+                SELECT COUNT(*) FROM (
+                    SELECT DISTINCT tournament_id,UPPER(COALESCE(event_name,'MS')) AS event_name
+                    FROM draws
+                    WHERE tournament_id IS NOT NULL
+                )
+            """).fetchone()[0]
+
         return jsonify({
             "totalPlayers": total,
             "activePlayers": active,
@@ -325,6 +480,22 @@ def create_app():
             "topPlayers": [dict(row) for row in top],
             "categoryBreakdown": [dict(row) for row in categories_breakdown],
             "recentActivity": [dict(row) for row in recent],
+            "insights": {
+                "risingPlayer": rising,
+                "inFormPlayer": in_form,
+                "youngestPlayer": youngest,
+                "mostActivePlayer": most_active,
+                "youngestBasis": "Age-group based; exact date of birth is not currently stored."
+            },
+            "tournamentPulse": {
+                "totalTournaments": int(tournament_counts["total_tournaments"] or 0),
+                "liveTournaments": int(tournament_counts["live_tournaments"] or 0),
+                "completedTournaments": int(tournament_counts["completed_tournaments"] or 0),
+                "totalMatches": int(match_counts["total_matches"] or 0),
+                "completedMatches": int(match_counts["completed_matches"] or 0),
+                "liveMatches": int(match_counts["live_matches"] or 0),
+                "events": int(event_count or 0),
+            },
         })
 
     @app.route("/api/categories")
