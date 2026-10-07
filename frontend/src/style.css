@@ -1280,3 +1280,103 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   .doubles-record-card{align-items:flex-start;flex-direction:column}
   .doubles-record-card .mini{width:100%}
 }
+
+
+/* Records: players and persistent doubles partnerships */
+.records-page{
+  display:grid;
+  gap:14px;
+}
+.record-view-tabs{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:6px;
+  width:max-content;
+  max-width:100%;
+  border:1px solid var(--ui-line);
+  border-radius:14px;
+  background:var(--ui-panel);
+}
+.record-view-tabs button{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  min-height:38px;
+  padding:8px 14px;
+  border:0;
+  border-radius:10px;
+  background:transparent;
+  color:var(--ui-muted);
+  font-weight:800;
+  cursor:pointer;
+}
+.record-view-tabs button.active{
+  background:rgba(49,211,154,.12);
+  color:var(--ui-green);
+  box-shadow:inset 0 0 0 1px rgba(49,211,154,.22);
+}
+.doubles-records-page{
+  min-width:0;
+}
+.records-section-head{
+  align-items:flex-start;
+}
+.records-section-head p{
+  margin:5px 0 0;
+  color:var(--ui-muted);
+  font-size:11px;
+  max-width:700px;
+}
+.records-filter-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.records-filter-actions select{
+  min-width:205px;
+}
+.records-summary{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+  margin:14px 0;
+}
+.records-summary>div{
+  padding:12px 14px;
+  border:1px solid var(--ui-line);
+  border-radius:13px;
+  background:rgba(255,255,255,.02);
+}
+.records-summary small{
+  display:block;
+  color:var(--ui-muted);
+  font-size:10px;
+}
+.records-summary strong{
+  display:block;
+  margin-top:4px;
+  font-size:20px;
+  color:var(--ui-text);
+}
+.doubles-records-table td,
+.doubles-records-table th{
+  white-space:nowrap;
+}
+.doubles-records-table td:nth-child(2){
+  min-width:220px;
+  white-space:normal;
+}
+:root[data-theme="light"] .records-summary>div{
+  background:#fff;
+}
+@media(max-width:760px){
+  .record-view-tabs{width:100%}
+  .record-view-tabs button{flex:1}
+  .records-summary{grid-template-columns:1fr}
+  .records-filter-actions{width:100%}
+  .records-filter-actions select,
+  .records-filter-actions .button{width:100%}
+}

@@ -381,7 +381,7 @@ function App() {
         </section>}
 
         <div className="message">{message}</div>
-        {activeTab === 'records' && <Records players={players} form={form} setForm={setForm} savePlayer={savePlayer} deletePlayer={deletePlayer} filters={filters} setFilters={setFilters} categoryOptions={categoryOptions} loadAll={loadAll} pointInputs={pointInputs} setPointInputs={setPointInputs} addPoints={addPoints} />}
+        {activeTab === 'records' && <Records players={players} form={form} setForm={setForm} savePlayer={savePlayer} deletePlayer={deletePlayer} filters={filters} setFilters={setFilters} categoryOptions={categoryOptions} loadAll={loadAll} pointInputs={pointInputs} setPointInputs={setPointInputs} addPoints={addPoints} setMessage={setMessage} />}
         {activeTab === 'draws' && <Draws draws={draws} drawForm={drawForm} setDrawForm={setDrawForm} generateDraw={generateDraw} categoryOptions={categoryOptions} drawCandidates={drawCandidates} />}
         {activeTab === 'tournaments' && <TournamentScreen tournaments={tournaments} players={players} categoryOptions={categoryOptions} refresh={loadAll} setMessage={setMessage} />}
         {activeTab === 'projector' && <ProjectorScreen draws={draws} tournaments={tournaments} refresh={loadAll} />}
@@ -670,48 +670,127 @@ function AuthScreen({
 }
 
 
-function Records({ players, form, setForm, savePlayer, deletePlayer, filters, setFilters, categoryOptions, loadAll, pointInputs, setPointInputs, addPoints }) {
-  return <section className="grid two"><div className="panel"><h3>{form.id ? 'Update Player' : 'Add Player'}</h3><form onSubmit={savePlayer} className="form"><Input label="Full name" value={form.full_name} onChange={v => setForm({ ...form, full_name: v })}/><div className="form-row"><Input label="First name" value={form.first_name} onChange={v => setForm({ ...form, first_name: v })}/><Input label="Last name" value={form.last_name} onChange={v => setForm({ ...form, last_name: v })}/></div><div className="form-row"><Input label="Category" value={form.category_code} onChange={v => setForm({ ...form, category_code: v })}/><Input label="Age group" value={form.age_group} onChange={v => setForm({ ...form, age_group: v })}/></div><div className="form-row"><Input label="Gender" value={form.gender} onChange={v => setForm({ ...form, gender: v })}/><Input label="Club" value={form.club} onChange={v => setForm({ ...form, club: v })}/></div><div className="form-row"><Input label="Rank" type="number" value={form.rank_position} onChange={v => setForm({ ...form, rank_position: v })}/><Input label="Total points correction" type="number" value={form.total_points} onChange={v => setForm({ ...form, total_points: v })}/></div><p className="helper">Use the table's “Add points” box to add latest tournament points. Example: 120 + 20 = 140.</p><label><span>Status</span><select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}><option>Active</option><option>Inactive</option></select></label><label><span>Notes</span><textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}/></label><div className="actions"><button className="button"><Plus size={16}/> Save</button><button type="button" className="button secondary" onClick={() => setForm(emptyForm())}>Clear</button></div></form></div><div className="panel wide"><div className="toolbar"><div className="search"><Search size={16}/><input placeholder="Search player, club or category" value={filters.q} onChange={e => setFilters({ ...filters, q: e.target.value })} onKeyDown={e => e.key === 'Enter' && loadAll()} /></div><select value={filters.category} onChange={e => setFilters({ ...filters, category: e.target.value })}>{categoryOptions.map(c => <option key={c}>{c}</option>)}</select><select value={filters.status} onChange={e => setFilters({ ...filters, status: e.target.value })}><option>All</option><option>Active</option><option>Inactive</option></select><button className="icon-btn" onClick={loadAll}><RefreshCw size={16}/></button></div><div className="table-wrap"><table><thead><tr><th>Rank</th><th>Name</th><th>Category</th><th>Club</th><th>Points</th><th>Add latest points</th><th>Status</th><th></th></tr></thead><tbody>{players.map(p => <tr key={p.id}><td>#{p.rank_position || '-'}</td><td><b>{p.full_name}</b><small>{p.gender} · {p.age_group}</small></td><td>{p.category_code}</td><td>{p.club || '-'}</td><td><b>{p.total_points}</b></td><td><div className="points-add"><input type="number" placeholder="+ points" value={pointInputs[p.id] || ''} onChange={e => setPointInputs(current => ({ ...current, [p.id]: e.target.value }))}/><button className="mini green" onClick={() => addPoints(p)}>Add</button></div></td><td><span className={p.status === 'Active' ? 'badge green' : 'badge'}>{p.status}</span></td><td><button className="mini" onClick={() => setForm(p)}>Edit</button><button className="mini danger" onClick={() => deletePlayer(p.id)}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div></div></section>;
+function Records({ players, form, setForm, savePlayer, deletePlayer, filters, setFilters, categoryOptions, loadAll, pointInputs, setPointInputs, addPoints, setMessage }) {
+  const [recordView, setRecordView] = useState('players');
+  const [doublesEvent, setDoublesEvent] = useState('All');
+  const [doublesTeams, setDoublesTeams] = useState([]);
+  const [loadingDoubles, setLoadingDoubles] = useState(false);
+
+  async function loadDoublesTeams(event=doublesEvent) {
+    setLoadingDoubles(true);
+    try {
+      const suffix=event && event!=='All' ? '?event='+encodeURIComponent(event) : '';
+      const rows=await api('/doubles/teams'+suffix);
+      setDoublesTeams(Array.isArray(rows) ? rows : []);
+    } catch (e) {
+      setDoublesTeams([]);
+      if (setMessage) setMessage(e.message || 'Could not load doubles team records.');
+    } finally {
+      setLoadingDoubles(false);
+    }
+  }
+
+  useEffect(() => {
+    if (recordView === 'doubles') loadDoublesTeams(doublesEvent);
+  }, [recordView, doublesEvent]);
+
+  async function archiveDoublesTeam(team) {
+    const label=team.team_name || [team.player_a_name,team.player_b_name].filter(Boolean).join(' / ');
+    if (!window.confirm('Archive '+label+'? The historical match results will remain intact.')) return;
+    try {
+      await api('/doubles/teams/'+team.id,{method:'DELETE'});
+      await loadDoublesTeams(doublesEvent);
+      if (setMessage) setMessage(label+' archived from active doubles teams.');
+    } catch (e) {
+      if (setMessage) setMessage(e.message || 'Could not archive doubles team.');
+    }
+  }
+
+  const doublesTotals=doublesTeams.reduce((acc,team)=>{
+    acc.matches+=Number(team.matches_played || 0);
+    acc.wins+=Number(team.wins || 0);
+    return acc;
+  },{matches:0,wins:0});
+
+  return <section className="records-page">
+    <div className="record-view-tabs" role="tablist" aria-label="Records sections">
+      <button type="button" className={recordView==='players'?'active':''} onClick={()=>setRecordView('players')}><Users size={16}/> Players</button>
+      <button type="button" className={recordView==='doubles'?'active':''} onClick={()=>setRecordView('doubles')}><Trophy size={16}/> Doubles Teams</button>
+    </div>
+
+    {recordView==='players' ? <section className="grid two">
+      <div className="panel">
+        <h3>{form.id ? 'Update Player' : 'Add Player'}</h3>
+        <form onSubmit={savePlayer} className="form">
+          <Input label="Full name" value={form.full_name} onChange={v => setForm({ ...form, full_name: v })}/>
+          <div className="form-row"><Input label="First name" value={form.first_name} onChange={v => setForm({ ...form, first_name: v })}/><Input label="Last name" value={form.last_name} onChange={v => setForm({ ...form, last_name: v })}/></div>
+          <div className="form-row"><Input label="Category" value={form.category_code} onChange={v => setForm({ ...form, category_code: v })}/><Input label="Age group" value={form.age_group} onChange={v => setForm({ ...form, age_group: v })}/></div>
+          <div className="form-row"><Input label="Gender" value={form.gender} onChange={v => setForm({ ...form, gender: v })}/><Input label="Club" value={form.club} onChange={v => setForm({ ...form, club: v })}/></div>
+          <div className="form-row"><Input label="Rank" type="number" value={form.rank_position} onChange={v => setForm({ ...form, rank_position: v })}/><Input label="Total points correction" type="number" value={form.total_points} onChange={v => setForm({ ...form, total_points: v })}/></div>
+          <p className="helper">Use the table's “Add points” box to add latest tournament points. Example: 120 + 20 = 140.</p>
+          <label><span>Status</span><select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}><option>Active</option><option>Inactive</option></select></label>
+          <label><span>Notes</span><textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}/></label>
+          <div className="actions"><button className="button"><Plus size={16}/> Save</button><button type="button" className="button secondary" onClick={() => setForm(emptyForm())}>Clear</button></div>
+        </form>
+      </div>
+      <div className="panel wide">
+        <div className="toolbar">
+          <div className="search"><Search size={16}/><input placeholder="Search player, club or category" value={filters.q} onChange={e => setFilters({ ...filters, q: e.target.value })} onKeyDown={e => e.key === 'Enter' && loadAll()} /></div>
+          <select value={filters.category} onChange={e => setFilters({ ...filters, category: e.target.value })}>{categoryOptions.map(c => <option key={c}>{c}</option>)}</select>
+          <select value={filters.status} onChange={e => setFilters({ ...filters, status: e.target.value })}><option>All</option><option>Active</option><option>Inactive</option></select>
+          <button className="icon-btn" onClick={loadAll}><RefreshCw size={16}/></button>
+        </div>
+        <div className="table-wrap"><table><thead><tr><th>Rank</th><th>Name</th><th>Category</th><th>Club</th><th>Points</th><th>Add latest points</th><th>Status</th><th></th></tr></thead><tbody>{players.map(p => <tr key={p.id}><td>#{p.rank_position || '-'}</td><td><b>{p.full_name}</b><small>{p.gender} · {p.age_group}</small></td><td>{p.category_code}</td><td>{p.club || '-'}</td><td><b>{p.total_points}</b></td><td><div className="points-add"><input type="number" placeholder="+ points" value={pointInputs[p.id] || ''} onChange={e => setPointInputs(current => ({ ...current, [p.id]: e.target.value }))}/><button className="mini green" onClick={() => addPoints(p)}>Add</button></div></td><td><span className={p.status === 'Active' ? 'badge green' : 'badge'}>{p.status}</span></td><td><button className="mini" onClick={() => setForm(p)}>Edit</button><button className="mini danger" onClick={() => deletePlayer(p.id)}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div>
+      </div>
+    </section> : <section className="panel doubles-records-page">
+      <div className="section-head records-section-head">
+        <div><span className="eyebrow">PARTNERSHIP HISTORY</span><h3>Doubles Team Records</h3><p>Saved MD, WD and XD pairs can be reused in future tournaments without forcing historical partnerships.</p></div>
+        <div className="records-filter-actions">
+          <select value={doublesEvent} onChange={e=>setDoublesEvent(e.target.value)}>
+            <option value="All">All doubles events</option>
+            <option value="MD">MD — Boys/Men Doubles</option>
+            <option value="WD">WD — Girls/Women Doubles</option>
+            <option value="XD">XD — Mixed Doubles</option>
+          </select>
+          <button type="button" className="button secondary" onClick={()=>loadDoublesTeams(doublesEvent)} disabled={loadingDoubles}><RefreshCw size={15}/> {loadingDoubles?'Refreshing…':'Refresh'}</button>
+        </div>
+      </div>
+
+      <div className="records-summary">
+        <div><small>Active saved teams</small><strong>{doublesTeams.length}</strong></div>
+        <div><small>Recorded matches</small><strong>{doublesTotals.matches}</strong></div>
+        <div><small>Recorded wins</small><strong>{doublesTotals.wins}</strong></div>
+      </div>
+
+      <div className="table-wrap doubles-records-table">
+        <table>
+          <thead><tr><th>Event</th><th>Team</th><th>Partner 1</th><th>Partner 2</th><th>Played</th><th>Wins</th><th>Losses</th><th>Win %</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            {doublesTeams.map(team=><tr key={team.id}>
+              <td><span className="badge green">{team.event_name}</span></td>
+              <td><b>{team.team_name}</b></td>
+              <td>{team.player_a_name}</td>
+              <td>{team.player_b_name}</td>
+              <td>{team.matches_played || 0}</td>
+              <td>{team.wins || 0}</td>
+              <td>{team.losses || 0}</td>
+              <td><b>{Number(team.win_rate || 0).toFixed(1)}%</b></td>
+              <td><span className="badge green">{team.status || 'Active'}</span></td>
+              <td><button type="button" className="mini danger" onClick={()=>archiveDoublesTeam(team)}>Archive</button></td>
+            </tr>)}
+          </tbody>
+        </table>
+        {!loadingDoubles && !doublesTeams.length && <div className="empty">No active doubles teams found for this filter. Create pairs from a tournament’s MD, WD or XD setup and they will appear here automatically.</div>}
+        {loadingDoubles && <div className="empty">Loading doubles team records…</div>}
+      </div>
+    </section>}
+  </section>;
 }
 
 function Draws({ draws, drawForm, setDrawForm, generateDraw, categoryOptions, drawCandidates }) {
   const [selected, setSelected] = useState(null);
   const selectedSet = new Set(drawForm.player_ids || []);
   const allVisibleIds = drawCandidates.map(player => player.id);
-  function updateDoublesPair(index, field, value) {
-    setDoublesPairs(current => current.map((pair,i)=>i===index ? {...pair,[field]:value} : pair));
-  }
-
-  function addDoublesPair() {
-    setDoublesPairs(current => [...current,{a:'',b:''}]);
-  }
-
-  function removeDoublesPair(index) {
-    setDoublesPairs(current => {
-      const next=current.filter((_,i)=>i!==index);
-      return next.length ? next : [{a:'',b:''}];
-    });
-  }
-
-  function clearDoublesPairs() {
-    setDoublesPairs([{a:'',b:''}]);
-  }
-
-  function useSavedDoublesTeam(team) {
-    const a=String(team.player_a_id);
-    const b=String(team.player_b_id);
-    setDoublesPairs(current => {
-      const already=current.some(p => [p.a,p.b].includes(a) || [p.a,p.b].includes(b));
-      if (already) {
-        setMessage('One of those partners is already assigned to another team in this draw.');
-        return current;
-      }
-      const emptyIndex=current.findIndex(p=>!p.a&&!p.b);
-      if (emptyIndex>=0) return current.map((p,i)=>i===emptyIndex?{a,b}:p);
-      return [...current,{a,b}];
-    });
-  }
-
   function togglePlayer(id) {
     setDrawForm(current => {
       const ids = new Set(current.player_ids || []);
@@ -1042,6 +1121,45 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
 
   function changeBracketZoom(delta) {
     setBracketZoom(z => Math.max(0.5,Math.min(1.5,Math.round((z+delta)*10)/10)));
+  }
+
+  function updateDoublesPair(index, field, value) {
+    setDoublesPairs(current => current.map((pair,i)=>i===index ? {...pair,[field]:value} : pair));
+  }
+
+  function addDoublesPair() {
+    setDoublesPairs(current => {
+      const last=current[current.length-1];
+      if (last && !last.a && !last.b) return current;
+      return [...current,{a:'',b:''}];
+    });
+  }
+
+  function removeDoublesPair(index) {
+    setDoublesPairs(current => {
+      const next=current.filter((_,i)=>i!==index);
+      return next.length ? next : [{a:'',b:''}];
+    });
+  }
+
+  function clearDoublesPairs() {
+    setDoublesPairs([{a:'',b:''}]);
+  }
+
+  function useSavedDoublesTeam(team) {
+    const a=String(team.player_a_id || '');
+    const b=String(team.player_b_id || '');
+    if (!a || !b) return;
+    const already=doublesPairs.some(p => [String(p.a||''),String(p.b||'')].includes(a) || [String(p.a||''),String(p.b||'')].includes(b));
+    if (already) {
+      setMessage('One of those partners is already assigned to another team in this draw.');
+      return;
+    }
+    setDoublesPairs(current => {
+      const emptyIndex=current.findIndex(p=>!p.a&&!p.b);
+      if (emptyIndex>=0) return current.map((p,i)=>i===emptyIndex?{a,b}:p);
+      return [...current,{a,b}];
+    });
   }
 
   function togglePlayer(id) {
@@ -1386,7 +1504,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             </> : <div className="doubles-builder">
               <div className="participant-head">
                 <div><b>{selectedEvent} Teams</b><small>Pair partners explicitly before generating the draw.</small></div>
-                <span>{completeDoublesPairs.length} complete team{completeDoublesPairs.length===1?'':'s'}</span>
+                <span>{completeDoublesPairs.length} teams ready · {completeDoublesPairs.length*2} players</span>
               </div>
               <div className="doubles-rule">
                 <Users size={17}/>
@@ -1429,7 +1547,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
                 </div>
               </div>
             </div>}
-            <button className="button" disabled={busy}><Shuffle size={16}/> Generate {isDoublesEvent ? selectedEvent+' Team Draw' : 'Round 1 Draw'}</button>
+            <button className="button" disabled={busy || (isDoublesEvent && completeDoublesPairs.length<2)}><Shuffle size={16}/> Generate {isDoublesEvent ? selectedEvent+' Round 1 — '+completeDoublesPairs.length+' Teams' : 'Round 1 Draw'}</button>
           </form>
         </div> : <div className="panel round-workspace">
           <div className="round-action-bar">
