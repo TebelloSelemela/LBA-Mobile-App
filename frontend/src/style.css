@@ -1024,3 +1024,83 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   .insight-grid,.pulse-grid{grid-template-columns:1fr}
   .tournament-event-bar .event-tabs{grid-template-columns:repeat(2,minmax(0,1fr))!important}
 }
+
+
+/* Final tournament workspace alignment pass */
+.tournament-detail-panel{
+  min-width:0;
+}
+.tournament-detail-panel>.section-head{
+  grid-template-columns:minmax(0,1fr) auto!important;
+  align-items:end!important;
+  column-gap:18px!important;
+  row-gap:10px!important;
+}
+.tournament-detail-panel>.section-head>div:first-child{min-width:0}
+.tournament-report-actions{
+  display:flex!important;
+  width:auto!important;
+  max-width:none!important;
+  justify-content:flex-end!important;
+  align-items:center!important;
+  flex-wrap:nowrap!important;
+  gap:8px!important;
+}
+.tournament-report-actions .button{
+  width:auto!important;
+  min-width:0!important;
+  min-height:40px!important;
+  padding:10px 13px!important;
+  white-space:nowrap!important;
+  border-radius:12px!important;
+}
+.tournament-detail-panel>.stats{
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  gap:9px!important;
+  width:100%;
+}
+.tournament-detail-panel>.stats .stat{
+  min-height:78px!important;
+  padding:13px 15px!important;
+}
+.tournament-detail-panel>.stats .stat span{font-size:10px!important}
+.tournament-detail-panel>.stats .stat b{font-size:25px!important}
+.tournament-event-bar{
+  grid-template-columns:minmax(220px,1fr) minmax(300px,340px)!important;
+  gap:18px!important;
+}
+.tournament-event-bar>div:first-child b{
+  display:block;
+  max-width:330px;
+}
+.tournament-event-bar>div:first-child small{
+  display:block;
+  max-width:420px;
+  line-height:1.35;
+}
+@media(max-width:1260px){
+  .tournament-detail-panel>.section-head{
+    grid-template-columns:1fr!important;
+    align-items:start!important;
+  }
+  .tournament-report-actions{
+    width:100%!important;
+    justify-content:flex-start!important;
+    flex-wrap:wrap!important;
+  }
+}
+@media(max-width:980px){
+  .tournament-detail-panel>.stats{
+    grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  }
+  .tournament-event-bar{
+    grid-template-columns:1fr!important;
+  }
+}
+@media(max-width:620px){
+  .tournament-report-actions{
+    display:grid!important;
+    grid-template-columns:1fr!important;
+  }
+  .tournament-report-actions .button{width:100%!important}
+}
