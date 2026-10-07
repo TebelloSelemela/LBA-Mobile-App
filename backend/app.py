@@ -1019,8 +1019,18 @@ def create_app():
         games=[]
         a_wins=b_wins=0
         for i,gme in enumerate(raw_games[:3],1):
-            a=nullable_int(gme.get("side_a_score")); b=nullable_int(gme.get("side_b_score"))
-            if a is None or b is None or a<0 or b<0:return jsonify({"error":f"Invalid score for game {i}"}),400
+            raw_a=gme.get("side_a_score"); raw_b=gme.get("side_b_score")
+            try:
+                num_a=float(raw_a); num_b=float(raw_b)
+            except (TypeError,ValueError):
+                return jsonify({"error":f"Invalid score for game {i}"}),400
+            if not num_a.is_integer() or not num_b.is_integer():
+                return jsonify({"error":f"Game {i} scores must be whole numbers."}),400
+            a=int(num_a); b=int(num_b)
+            if a<0 or b<0:
+                return jsonify({"error":f"Game {i} scores cannot be negative."}),400
+            if a>30 or b>30:
+                return jsonify({"error":f"Game {i} scores cannot exceed 30."}),400
             if a==b:return jsonify({"error":f"Game {i} cannot end in a tie."}),400
             high=max(a,b); low=min(a,b)
             valid=(high==21 and low<=19) or (20<=low<high<=29 and high-low>=2) or (high==30 and low in range(0,30))
