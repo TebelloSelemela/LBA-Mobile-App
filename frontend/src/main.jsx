@@ -489,11 +489,11 @@ function Overview({ dashboard, players, draws, setActiveTab, exportFile }) {
   const top = dashboard?.topPlayers || [];
   const categories = dashboard?.categoryBreakdown || [];
   return <section className="overview-page">
-    <section className="welcome-card"><div><span className="eyebrow">LESOTHO BADMINTON ASSOCIATION</span><h2>Committee dashboard</h2><p>Manage rankings, player records and tournament draws from one professional workspace.</p><div className="quick-actions"><button className="button" onClick={() => setActiveTab('records')}><Plus size={16}/> Add player</button><button className="button secondary" onClick={() => setActiveTab('draws')}><Shuffle size={16}/> Create draw</button><button className="button secondary" onClick={() => exportFile('/players/export.xlsx','lba_players.xlsx')}><FileText size={16}/> Export Excel</button></div></div><div className="court-badge"><span>🏸</span><b>PLAY</b><b>RANK</b><b>GROW</b></div></section>
+    <section className="welcome-card"><div><span className="eyebrow">LESOTHO BADMINTON ASSOCIATION</span><h2>Committee dashboard</h2><p>Manage the player register, rankings and live tournament operations from one professional workspace.</p><div className="quick-actions"><button className="button" onClick={() => setActiveTab('records')}><Users size={16}/> Player register</button><button className="button secondary" onClick={() => setActiveTab('tournaments')}><Trophy size={16}/> Tournament centre</button><button className="button secondary" onClick={() => exportFile('/players/export.xlsx','lba_players.xlsx')}><FileText size={16}/> Export players</button></div></div><div className="court-badge"><span>🏸</span><b>PLAY</b><b>RANK</b><b>GROW</b></div></section>
     <section className="stats"><Stat label="Registered players" value={dashboard?.totalPlayers ?? 0}/><Stat label="Active players" value={dashboard?.activePlayers ?? 0}/><Stat label="Categories" value={dashboard?.categories ?? 0}/><Stat label="Saved draws" value={dashboard?.draws ?? 0}/></section>
     <section className="dashboard-grid"><div className="panel"><div className="section-head"><div><span className="eyebrow">RANKING SNAPSHOT</span><h3>Leading players</h3></div><button className="text-btn" onClick={() => setActiveTab('records')}>View register</button></div><div className="ranking-list">{top.map((p,i)=><div className="rank-row" key={p.id}><strong className={`rank-no rank-${i+1}`}>{i+1}</strong><div className="avatar">{p.full_name.split(' ').map(x=>x[0]).slice(0,2).join('')}</div><div className="rank-name"><b>{p.full_name}</b><small>{p.category_code} · {p.club || 'Independent'}</small></div><strong>{p.total_points}<small>points</small></strong></div>)}{!top.length&&<div className="empty">No ranking records yet.</div>}</div></div>
       <div className="panel"><div className="section-head"><div><span className="eyebrow">PARTICIPATION</span><h3>Categories</h3></div></div><div className="category-list">{categories.map(c=><div className="category-row" key={c.category_code}><div><b>{c.category_code}</b><small>{c.event_type} · {c.age_group}</small></div><strong>{c.player_count}</strong></div>)}</div>{!categories.length&&<div className="empty">Import player records to see category activity.</div>}</div></section>
-    <section className="panel feature-strip"><div><Trophy size={20}/><div><b>Tournament centre</b><span>{draws.length ? `${draws.length} saved draw(s) available.` : 'No draws yet. Create one when players confirm attendance.'}</span></div></div><button className="button" onClick={() => setActiveTab('draws')}>Open draw manager</button></section>
+    <section className="panel feature-strip"><div><Trophy size={20}/><div><b>Tournament operations</b><span>{draws.length ? `${draws.length} draw record(s) are available. Use Tournament Centre for live results, progression and reporting.` : 'Create a tournament when attendance is confirmed, then run each event from Round 1 to the Final.'}</span></div></div><button className="button" onClick={() => setActiveTab('tournaments')}>Open Tournament Centre</button></section>
   </section>;
 }
 
@@ -774,6 +774,17 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const latestRound = rounds[rounds.length-1];
   const latestRoundComplete = !!latestRound && latestRound.matches.length > 0 && latestRound.matches.every(m => m.status === 'Completed');
   const selectedEventMatches = useMemo(() => (detail?.matches || []).filter(m => (m.event_name || 'MS').toUpperCase() === selectedEvent), [detail, selectedEvent]);
+  const eventProgress = useMemo(() => {
+    const result={};
+    eventOptions.forEach(event => {
+      const matches=(detail?.matches || []).filter(m => (m.event_name || 'MS').toUpperCase() === event);
+      const exists=(detail?.draws || []).some(d => (d.event_name || 'MS').toUpperCase() === event);
+      const completed=matches.filter(m => m.status === 'Completed').length;
+      const live=matches.filter(m => m.status === 'In Progress').length;
+      result[event]={exists,total:matches.length,completed,live};
+    });
+    return result;
+  }, [detail]);
   const finalMatch = (detail?.matches || []).find(m => (m.event_name || 'MS').toUpperCase() === selectedEvent && m.stage === 'Final' && m.match_no !== 3);
   const thirdMatch = (detail?.matches || []).find(m => (m.event_name || 'MS').toUpperCase() === selectedEvent && m.stage === 'Final' && m.match_no === 3);
   const eventReadiness = useMemo(() => {
@@ -986,6 +997,19 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       .map(g => ({side_a_score:Number(g.a),side_b_score:Number(g.b)}))
       .filter(g => Number.isFinite(g.side_a_score) && Number.isFinite(g.side_b_score));
 
+    if (used.some(g => g.side_a_score < 0 || g.side_b_score < 0)) {
+      setMessage('Scores cannot be negative. Enter a value from 0 to 30.');
+      return;
+    }
+    if (used.some(g => g.side_a_score > 30 || g.side_b_score > 30)) {
+      setMessage('A badminton game score cannot exceed 30.');
+      return;
+    }
+    if (used.some(g => !Number.isInteger(g.side_a_score) || !Number.isInteger(g.side_b_score))) {
+      setMessage('Game scores must be whole numbers.');
+      return;
+    }
+
     if (!used.length) {
       setMessage('Enter at least one completed game before saving the live result.');
       return;
@@ -1135,9 +1159,10 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             <p>{detail.venue || 'Venue not set'} · {detail.start_date || 'Date not set'} · <b>{detail.status}</b></p>
             <small className="server-clock">System time: {formatLbaTime(detail.server_time)} · Lesotho / SAST (UTC+02:00)</small>
           </div>
-          <div className="quick-actions">
+          <div className="quick-actions tournament-report-actions">
+            <button className="button" onClick={()=>exportFile('/tournaments/'+detail.id+'/executive-draws.pdf',detail.tournament_code+'_Executive_Draw_Pack.pdf')}><FileText size={16}/> Executive Draw Pack</button>
+            <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/export.xlsx',detail.tournament_code+'_tournament.xlsx')}><Download size={16}/> Results Excel</button>
             <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/scoresheets.pdf',detail.tournament_code+'_scoresheets.pdf')}><ClipboardList size={16}/> Match Scoresheets</button>
-            <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/export.xlsx',detail.tournament_code+'_tournament.xlsx')}><Download size={16}/> Full Tournament Excel</button>
           </div>
         </div>
 
@@ -1170,9 +1195,10 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           </div>
           <div className="event-tabs">
             {eventOptions.map(event => {
-              const exists=(detail?.draws || []).some(d => (d.event_name || 'MS').toUpperCase()===event);
+              const info=eventProgress[event] || {exists:false,total:0,completed:0,live:0};
+              const status=!info.exists ? 'Add draw' : (info.total && info.completed===info.total ? 'Complete' : (info.live ? info.completed+'/'+info.total+' · LIVE' : info.completed+'/'+info.total+' done'));
               return <button key={event} type="button" className={selectedEvent===event ? 'event-tab active' : 'event-tab'} onClick={()=>{setSelectedEvent(event);setDraw(d=>({...d,event_name:event,draw_type:['MD','WD','XD'].includes(event)?'Doubles':'Singles',player_ids:[],title:detail.name+' — '+event}));}}>
-                <b>{event}</b><span>{exists ? 'Draw created' : 'Add draw'}</span>
+                <b>{event}</b><span>{status}</span>
               </button>;
             })}
           </div>
@@ -1207,8 +1233,8 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
               <small>{latestRound ? 'Latest generated round: '+latestRound.stage+'. ' : ''}Record results live; completed winners follow the fixed bracket path.</small>
             </div>
             <div className="quick-actions">
-              <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/bracket.pdf?event='+encodeURIComponent(selectedEvent),detail.tournament_code+'_'+selectedEvent+'_'+(latestRound?.stage || 'draw').replaceAll(' ','_')+'_draw.pdf')}><FileText size={16}/> Export {selectedEvent} Draw</button>
-              {latestRoundComplete && latestRound?.stage !== 'Final' && <button className="button secondary" disabled={busy} onClick={()=>generateNextRound(false)}><Shuffle size={16}/> Generate Next Round</button>}
+              <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/bracket.pdf?event='+encodeURIComponent(selectedEvent),detail.tournament_code+'_'+selectedEvent+'_'+(latestRound?.stage || 'draw').replaceAll(' ','_')+'_draw.pdf')}><FileText size={16}/> Export This Event</button>
+              {latestRoundComplete && latestRound?.stage !== 'Final' && <button className="mini advance-recovery" disabled={busy} onClick={()=>generateNextRound(false)} title="Use only if automatic advancement did not create the next round"><RefreshCw size={14}/> Advance Round</button>}
               {readyToFinish && detail.status !== 'Completed' && <button className="button" disabled={busy} onClick={finishTournament}><Trophy size={16}/> Declare Tournament Finished</button>}
             </div>
           </div>
@@ -1274,7 +1300,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
                     </div>}
                   {openResult === m.id && <div className="form result-entry">
                     <b>Enter game scores — best of 3</b>
-                    {games.map((g,i)=><div className="result-game-row" key={i}><Input label={'Game '+(i+1)+' · Player A'} type="number" min="0" max="30" step="1" value={g.a} onChange={v=>{setResultDirty(true);setGames(gs=>gs.map((x,j)=>j===i?{...x,a:v}:x))}}/><Input label={'Game '+(i+1)+' · Player B'} type="number" min="0" max="30" step="1" value={g.b} onChange={v=>{setResultDirty(true);setGames(gs=>gs.map((x,j)=>j===i?{...x,b:v}:x))}}/></div>)}
+                    {games.map((g,i)=><div className="result-game-row" key={i}><Input label={'Game '+(i+1)+' · Player A'} type="number" min="0" max="30" step="1" inputMode="numeric" value={g.a} onChange={v=>{if(v!==''&&(Number(v)<0||Number(v)>30))return;setResultDirty(true);setGames(gs=>gs.map((x,j)=>j===i?{...x,a:v}:x))}}/><Input label={'Game '+(i+1)+' · Player B'} type="number" min="0" max="30" step="1" inputMode="numeric" value={g.b} onChange={v=>{if(v!==''&&(Number(v)<0||Number(v)>30))return;setResultDirty(true);setGames(gs=>gs.map((x,j)=>j===i?{...x,b:v}:x))}}/></div>)}
                     <small className="helper">Save after each completed game if you are recording the match live. Badminton scoring: 21-point games, win by 2 after 20-all, with 30 as the maximum.</small>
                     <button type="button" className="button result-save-button" onClick={()=>saveResult(m.id)} disabled={busy}>
                       {busy ? 'Saving…' : 'Save Live Result'}
@@ -1380,6 +1406,6 @@ function Reports() {
 }
 
 function Stat({ label, value }) { return <div className="stat"><span>{label}</span><b>{value}</b></div>; }
-function Input({ label, value, onChange, type = 'text' }) { return <label><span>{label}</span><input type={type} value={value ?? ''} onChange={e => onChange(e.target.value)} /></label>; }
+function Input({ label, value, onChange, type = 'text', min, max, step, inputMode }) { return <label><span>{label}</span><input type={type} min={min} max={max} step={step} inputMode={inputMode} value={value ?? ''} onChange={e => onChange(e.target.value)} /></label>; }
 
 createRoot(document.getElementById('root')).render(<App />);
