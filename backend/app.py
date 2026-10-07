@@ -498,6 +498,91 @@ def create_app():
             },
         })
 
+    @app.route("/api/doubles/teams", methods=["GET"])
+    @require_auth
+    def list_doubles_teams():
+        event=(request.args.get("event") or "").strip().upper()
+        with db() as con:
+            args=[]; where="WHERE dt.status='Active'"
+            if event:
+                where+=" AND UPPER(dt.event_name)=?"
+                args.append(event)
+            rows=con.execute(f"""SELECT dt.*,pa.full_name AS player_a_name,pb.full_name AS player_b_name,
+                                       pa.gender AS player_a_gender,pb.gender AS player_b_gender,
+                                       pa.category_code AS player_a_category,pb.category_code AS player_b_category
+                                FROM doubles_teams dt
+                                JOIN players pa ON pa.id=dt.player_a_id
+                                JOIN players pb ON pb.id=dt.player_b_id
+                                {where}
+                                ORDER BY dt.event_name,dt.team_name""",args).fetchall()
+
+            completed=con.execute("""SELECT dm.side_a_player_ids,dm.side_b_player_ids,dm.side_a,dm.side_b,dm.winner,d.event_name
+                                     FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
+                                     WHERE dm.status='Completed' AND dm.side_b!='Bye'
+                                       AND UPPER(COALESCE(d.event_name,'')) IN ('MD','WD','XD')""").fetchall()
+
+            output=[]
+            for row in rows:
+                item=dict(row)
+                ids={int(item["player_a_id"]),int(item["player_b_id"])}
+                played=wins=0
+                for m in completed:
+                    a_ids={int(x) for x in str(m["side_a_player_ids"] or "").split(",") if x.strip().isdigit()}
+                    b_ids={int(x) for x in str(m["side_b_player_ids"] or "").split(",") if x.strip().isdigit()}
+                    if ids==a_ids or ids==b_ids:
+                        played+=1
+                        if (ids==a_ids and m["winner"]==m["side_a"]) or (ids==b_ids and m["winner"]==m["side_b"]):
+                            wins+=1
+                item["matches_played"]=played
+                item["wins"]=wins
+                item["losses"]=max(0,played-wins)
+                item["win_rate"]=round((wins/played)*100,1) if played else 0
+                output.append(item)
+        return jsonify(output)
+
+    @app.route("/api/doubles/teams", methods=["POST"])
+    @require_auth
+    def create_doubles_team():
+        data=request.get_json(silent=True) or {}
+        event=(data.get("event_name") or "").strip().upper()
+        a_id=nullable_int(data.get("player_a_id")); b_id=nullable_int(data.get("player_b_id"))
+        if event not in {"MD","WD","XD"}:
+            return jsonify({"error":"Doubles team event must be MD, WD or XD."}),400
+        if not a_id or not b_id:
+            return jsonify({"error":"Select both partners."}),400
+        with db() as con:
+            a=con.execute("SELECT * FROM players WHERE id=? AND status='Active'",(a_id,)).fetchone()
+            bb=con.execute("SELECT * FROM players WHERE id=? AND status='Active'",(b_id,)).fetchone()
+            if not a or not bb:return jsonify({"error":"Both partners must be active players."}),400
+            a=dict(a); bb=dict(bb)
+            error=_validate_doubles_pair(event,a,bb)
+            if error:return jsonify({"error":error}),400
+            pa,pb=(a,bb) if int(a["id"])<int(bb["id"]) else (bb,a)
+            team_name=(data.get("team_name") or f"{a['full_name']} / {bb['full_name']}").strip()
+            now=now_iso()
+            con.execute("""INSERT INTO doubles_teams(event_name,player_a_id,player_b_id,team_name,status,created_by,created_at,updated_at)
+                           VALUES(?,?,?,?,?,?,?,?)
+                           ON CONFLICT(event_name,player_a_id,player_b_id)
+                           DO UPDATE SET team_name=excluded.team_name,status='Active',updated_at=excluded.updated_at""",
+                        (event,pa["id"],pb["id"],team_name,"Active",g.current_user["username"],now,now))
+            con.commit()
+            row=con.execute("""SELECT dt.*,pa.full_name AS player_a_name,pb.full_name AS player_b_name
+                               FROM doubles_teams dt JOIN players pa ON pa.id=dt.player_a_id JOIN players pb ON pb.id=dt.player_b_id
+                               WHERE dt.event_name=? AND dt.player_a_id=? AND dt.player_b_id=?""",
+                            (event,pa["id"],pb["id"])).fetchone()
+        return jsonify(dict(row)),201
+
+    @app.route("/api/doubles/teams/<int:team_id>", methods=["DELETE"])
+    @require_auth
+    def archive_doubles_team(team_id):
+        now=now_iso()
+        with db() as con:
+            team=con.execute("SELECT * FROM doubles_teams WHERE id=?",(team_id,)).fetchone()
+            if not team:return jsonify({"error":"Doubles team not found"}),404
+            con.execute("UPDATE doubles_teams SET status='Archived',updated_at=? WHERE id=?",(now,team_id))
+            con.commit()
+        return jsonify({"archived":True,"id":team_id})
+
     @app.route("/api/categories")
     @require_auth
     def categories():
@@ -764,6 +849,8 @@ def create_app():
         seed_by_rank = bool(data.get("seed_by_rank", False))
         selected_ids = [nullable_int(pid) for pid in (data.get("player_ids") or [])]
         selected_ids = [pid for pid in selected_ids if pid is not None]
+        raw_pairs = data.get("pairs") or []
+        save_pairs = bool(data.get("save_pairs", True))
         tournament_id=nullable_int(data.get("tournament_id"))
         event_name=(data.get("event_name") or "").strip()
         requested_round=(data.get("round_name") or "").strip()
@@ -783,12 +870,56 @@ def create_app():
                 args=[]; sql="SELECT * FROM players WHERE status='Active'"
                 if category and category!="All": sql+=" AND category_code=?"; args.append(category)
                 players=[dict(row) for row in con.execute(sql,args).fetchall()]
-            if len(players)<2:return jsonify({"error":"Select at least two players for a knockout tournament."}),400
-            if seed_by_rank: players.sort(key=lambda x:(x.get("rank_position") is None,x.get("rank_position") or 999999))
-            else:
-                import random; random.shuffle(players)
 
-            fixtures=build_fixtures(players,draw_type)
+            explicit_pairs=[]
+            if draw_type.lower()=="doubles" and raw_pairs:
+                used=set()
+                for index,pair in enumerate(raw_pairs,1):
+                    a_id=nullable_int(pair.get("player_a_id"))
+                    b_id=nullable_int(pair.get("player_b_id"))
+                    if not a_id or not b_id:
+                        return jsonify({"error":f"Team {index} needs two partners."}),400
+                    if a_id in used or b_id in used:
+                        return jsonify({"error":f"A player is used more than once in the {event_name or 'doubles'} team list."}),400
+                    a=con.execute("SELECT * FROM players WHERE id=? AND status='Active'",(a_id,)).fetchone()
+                    bb=con.execute("SELECT * FROM players WHERE id=? AND status='Active'",(b_id,)).fetchone()
+                    if not a or not bb:
+                        return jsonify({"error":f"Team {index} contains an unavailable player."}),400
+                    a=dict(a); bb=dict(bb)
+                    error=_validate_doubles_pair(event_name,a,bb)
+                    if error:
+                        return jsonify({"error":f"Team {index}: {error}"}),400
+                    used.update([a_id,b_id])
+                    pa,pb=(a,bb) if int(a["id"])<int(bb["id"]) else (bb,a)
+                    team_name=f"{a['full_name']} / {bb['full_name']}"
+                    team_id=None
+                    if save_pairs:
+                        now_team=now_iso()
+                        con.execute("""INSERT INTO doubles_teams(event_name,player_a_id,player_b_id,team_name,status,created_by,created_at,updated_at)
+                                       VALUES(?,?,?,?,?,?,?,?)
+                                       ON CONFLICT(event_name,player_a_id,player_b_id)
+                                       DO UPDATE SET team_name=excluded.team_name,status='Active',updated_at=excluded.updated_at""",
+                                    ((event_name or "MD").upper(),pa["id"],pb["id"],team_name,"Active",g.current_user["username"],now_team,now_team))
+                        row_team=con.execute("SELECT id FROM doubles_teams WHERE event_name=? AND player_a_id=? AND player_b_id=?",
+                                             ((event_name or "MD").upper(),pa["id"],pb["id"])).fetchone()
+                        team_id=row_team["id"] if row_team else None
+                    explicit_pairs.append({"name":team_name,"ids":f"{a_id},{b_id}","team_id":team_id})
+                if len(explicit_pairs)<2:
+                    return jsonify({"error":"Select at least two complete doubles teams for a knockout draw."}),400
+
+            if draw_type.lower()!="doubles" and len(players)<2:
+                return jsonify({"error":"Select at least two players for a knockout tournament."}),400
+            if draw_type.lower()=="doubles" and not explicit_pairs and len(players)<4:
+                return jsonify({"error":"Select at least four players (two teams) for a doubles knockout tournament."}),400
+
+            if seed_by_rank and not explicit_pairs:
+                players.sort(key=lambda x:(x.get("rank_position") is None,x.get("rank_position") or 999999))
+            elif not explicit_pairs:
+                import random; random.shuffle(players)
+            elif not seed_by_rank:
+                import random; random.shuffle(explicit_pairs)
+
+            fixtures=build_fixtures(players,draw_type,explicit_pairs or None)
             if not fixtures:
                 return jsonify({"error":"This event needs at least two complete entrants/teams. Doubles requires complete pairs."}),400
             slots=len(fixtures)*2
@@ -813,7 +944,7 @@ def create_app():
                             (tournament_id,g.current_user["username"],"DRAW_GENERATED",f"{round_name}: {len(players)} participant(s), {len(fixtures)} match(es)",now))
             con.execute("INSERT INTO audit_logs(actor,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
                         (g.current_user["username"],"GENERATE_DRAW","draws",draw_id,f"{title}: {len(players)} selected participant(s), {len(fixtures)} match(es)",now))
-            con.commit(); draw=get_draw(con,draw_id); draw["selected_player_count"]=len(players)
+            con.commit(); draw=get_draw(con,draw_id); draw["selected_player_count"]=len(players); draw["selected_team_count"]=len(explicit_pairs) if explicit_pairs else None
         return jsonify(draw),201
 
 
@@ -1550,6 +1681,21 @@ def ensure_database():
             FOREIGN KEY(tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
             FOREIGN KEY(match_id) REFERENCES draw_matches(id) ON DELETE SET NULL
         );
+        CREATE TABLE IF NOT EXISTS doubles_teams (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_name TEXT NOT NULL,
+            player_a_id INTEGER NOT NULL,
+            player_b_id INTEGER NOT NULL,
+            team_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Active',
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(event_name, player_a_id, player_b_id),
+            FOREIGN KEY(player_a_id) REFERENCES players(id) ON DELETE CASCADE,
+            FOREIGN KEY(player_b_id) REFERENCES players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_doubles_teams_event ON doubles_teams(event_name,status);
         CREATE TABLE IF NOT EXISTS draws (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
@@ -1754,7 +1900,33 @@ def infer_age_group(category):
     return "Open"
 
 
-def build_fixtures(players, draw_type):
+def _gender_bucket(player):
+    gender = str(player.get("gender") or "").strip().lower()
+    event_type = str(player.get("event_type") or "").strip().lower()
+    if gender in {"men","male","boys","boy"} or "men's" in event_type or "boys" in event_type:
+        return "M"
+    if gender in {"women","female","girls","girl"} or "women's" in event_type or "girls" in event_type:
+        return "W"
+    return "O"
+
+
+def _validate_doubles_pair(event_name, player_a, player_b):
+    event=(event_name or "").upper()
+    if not player_a or not player_b:
+        return "Both partners are required."
+    if int(player_a["id"]) == int(player_b["id"]):
+        return "A player cannot be paired with themselves."
+    ga=_gender_bucket(player_a); gb=_gender_bucket(player_b)
+    if event=="MD" and (ga!="M" or gb!="M"):
+        return "MD requires two male/boys players."
+    if event=="WD" and (ga!="W" or gb!="W"):
+        return "WD requires two female/girls players."
+    if event=="XD" and set([ga,gb]) != {"M","W"}:
+        return "XD requires one male/boys player and one female/girls player."
+    return None
+
+
+def build_fixtures(players, draw_type, doubles_pairs=None):
     """Build a true power-of-two knockout bracket.
 
     Every entrant gets a fixed path through the draw. When the entrant count is
@@ -1763,16 +1935,25 @@ def build_fixtures(players, draw_type):
     """
     if draw_type.lower() == "doubles":
         entrants = []
-        for i in range(0, len(players), 2):
-            a = players[i]
-            b = players[i + 1] if i + 1 < len(players) else None
-            if not b:
-                # Do not create a fake one-player doubles team.
-                continue
-            entrants.append({
-                "name": f"{a['full_name']} / {b['full_name']}",
-                "ids": f"{a['id']},{b['id']}"
-            })
+        if doubles_pairs:
+            for pair in doubles_pairs:
+                entrants.append({
+                    "name": pair["name"],
+                    "ids": pair["ids"],
+                    "team_id": pair.get("team_id")
+                })
+        else:
+            # Backward compatibility for older clients. The current tournament
+            # UI sends explicit admin-selected pairs instead of relying on order.
+            for i in range(0, len(players), 2):
+                a = players[i]
+                b = players[i + 1] if i + 1 < len(players) else None
+                if not b:
+                    continue
+                entrants.append({
+                    "name": f"{a['full_name']} / {b['full_name']}",
+                    "ids": f"{a['id']},{b['id']}"
+                })
     else:
         entrants = [{"name": p["full_name"], "ids": str(p["id"])} for p in players]
 
