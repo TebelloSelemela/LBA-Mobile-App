@@ -1693,3 +1693,227 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
 @media(max-width:480px){
   .records-summary{grid-template-columns:1fr}
 }
+
+
+/* 2026 light-theme contrast surfaces refresh */
+:root[data-theme="light"]{
+  --ui-bg:#e2e9ee;
+  --ui-panel:#f9fbfc;
+  --ui-panel2:#dce7ec;
+  --ui-input:#f3f7f9;
+  --ui-text:#10263b;
+  --ui-muted:#506579;
+  --ui-line:#aebfca;
+  --ui-green:#0c8f68;
+}
+
+/* Main canvas: deliberately contrasted so cards no longer disappear into white space */
+:root[data-theme="light"] body,
+:root[data-theme="light"] #root{
+  background:#e2e9ee;
+  color:#10263b;
+}
+:root[data-theme="light"] .app-shell{
+  background:
+    radial-gradient(circle at 86% 0%,rgba(12,143,104,.11),transparent 29%),
+    linear-gradient(145deg,#edf2f5 0%,#dfe8ed 55%,#e6eef1 100%);
+}
+
+/* Sidebar */
+:root[data-theme="light"] .sidebar{
+  background:#f4f8fa;
+  border-right:1px solid #b7c6d0;
+  box-shadow:10px 0 26px rgba(16,38,59,.06);
+}
+:root[data-theme="light"] .nav{
+  color:#314a5f;
+}
+:root[data-theme="light"] .nav:hover{
+  background:#dcebe6;
+  color:#075f49;
+}
+:root[data-theme="light"] .nav.active{
+  background:#c5e9dc;
+  color:#064c3b;
+  box-shadow:inset 0 0 0 1px rgba(12,143,104,.18);
+}
+:root[data-theme="light"] .logout{
+  background:#dce5ea;
+  color:#203a50;
+  border-color:#b4c5cf;
+}
+
+/* Primary surfaces */
+:root[data-theme="light"] .panel,
+:root[data-theme="light"] .stat,
+:root[data-theme="light"] .hero{
+  background:#f9fbfc;
+  border-color:#b6c6d0;
+  box-shadow:0 7px 18px rgba(16,38,59,.07);
+}
+
+/* Secondary/grouped sections: intentionally not white */
+:root[data-theme="light"] .tournament-create-form,
+:root[data-theme="light"] .doubles-builder,
+:root[data-theme="light"] .tournament-event-bar,
+:root[data-theme="light"] .participant-list,
+:root[data-theme="light"] .draw-header,
+:root[data-theme="light"] .draw-item,
+:root[data-theme="light"] .fixture,
+:root[data-theme="light"] .bracket-scroll,
+:root[data-theme="light"] .record-view-tabs{
+  background:#e6edf1;
+  border-color:#b6c6d0;
+}
+
+/* Tournament screen hierarchy */
+:root[data-theme="light"] .tournament-detail-panel{
+  background:#f8fafb;
+}
+:root[data-theme="light"] .tournament-meta-strip>div{
+  background:#e7eff3;
+  border-color:#afc1cc;
+}
+:root[data-theme="light"] .tournament-meta-strip small{
+  color:#4b6479;
+}
+:root[data-theme="light"] .tournament-meta-strip b{
+  color:#10263b;
+}
+:root[data-theme="light"] .tournament-event-bar{
+  background:linear-gradient(135deg,#d4dde3 0%,#cdd7dd 100%);
+  border-color:#aebdc7;
+}
+:root[data-theme="light"] .tournament-event-bar b,
+:root[data-theme="light"] .tournament-event-bar strong{
+  color:#10263b;
+}
+:root[data-theme="light"] .tournament-event-bar small{
+  color:#53687a;
+}
+
+/* Event buttons */
+:root[data-theme="light"] .event-tab{
+  background:#e8eef2;
+  border-color:#b4c3cd;
+  color:#18344c;
+}
+:root[data-theme="light"] .event-tab:hover{
+  background:#dde8ed;
+  border-color:#96acb9;
+}
+:root[data-theme="light"] .event-tab.active{
+  background:#c4eadc;
+  border-color:#49b990;
+  color:#075a43;
+  box-shadow:0 3px 8px rgba(12,143,104,.08);
+}
+
+/* Forms */
+:root[data-theme="light"] input,
+:root[data-theme="light"] select,
+:root[data-theme="light"] textarea{
+  background:#f2f6f8;
+  color:#10263b;
+  border-color:#aebfca;
+  box-shadow:inset 0 1px 2px rgba(16,38,59,.025);
+}
+:root[data-theme="light"] input::placeholder,
+:root[data-theme="light"] textarea::placeholder{
+  color:#7a8b99;
+}
+:root[data-theme="light"] input:focus,
+:root[data-theme="light"] select:focus,
+:root[data-theme="light"] textarea:focus{
+  background:#fbfdfd;
+  border-color:#0c8f68;
+  box-shadow:0 0 0 3px rgba(12,143,104,.12);
+}
+:root[data-theme="light"] .readonly-input{
+  background:#dfe8ed;
+  color:#17344a;
+}
+
+/* Tables */
+:root[data-theme="light"] .table-wrap{
+  background:#f8fafb;
+  border-color:#b5c5cf;
+}
+:root[data-theme="light"] th{
+  background:#d9e3e8;
+  color:#2d475d;
+  border-bottom-color:#afc0ca;
+}
+:root[data-theme="light"] tbody tr:nth-child(even) td{
+  background:#f1f5f7;
+}
+:root[data-theme="light"] tbody tr:hover td{
+  background:#e5f1ed;
+}
+
+/* Buttons */
+:root[data-theme="light"] .button{
+  background:#17b883;
+  color:#062b20;
+  border-color:#109e70;
+  box-shadow:0 2px 6px rgba(12,143,104,.12);
+}
+:root[data-theme="light"] .button:hover{
+  background:#12aa78;
+}
+:root[data-theme="light"] .button.secondary,
+:root[data-theme="light"] .icon-btn,
+:root[data-theme="light"] .mini{
+  background:#e0e8ed;
+  color:#18344c;
+  border-color:#afc0ca;
+}
+:root[data-theme="light"] .button.secondary:hover,
+:root[data-theme="light"] .icon-btn:hover,
+:root[data-theme="light"] .mini:hover{
+  background:#d3dfe5;
+  border-color:#95aab7;
+}
+
+/* Accents and summary surfaces */
+:root[data-theme="light"] .records-summary>div{
+  background:#e9f0f3;
+  border-color:#b6c6d0;
+}
+:root[data-theme="light"] .classification-note{
+  background:#dff0e9;
+  border-color:#abd7c6;
+  color:#41596c;
+}
+:root[data-theme="light"] .badge.green,
+:root[data-theme="light"] .doubles-rank{
+  background:#d2eee3;
+  color:#075c45;
+  border-color:#96d0ba;
+}
+
+/* Strong information banners keep hierarchy visible in light mode */
+:root[data-theme="light"] .message,
+:root[data-theme="light"] .welcome-banner{
+  background:#193b56;
+  color:#f8fbfd;
+  border-color:#193b56;
+}
+
+/* Typography contrast */
+:root[data-theme="light"] .brand h1,
+:root[data-theme="light"] .panel h3,
+:root[data-theme="light"] .section-head h3,
+:root[data-theme="light"] .stat b,
+:root[data-theme="light"] table td,
+:root[data-theme="light"] .participant b,
+:root[data-theme="light"] .rank-name b{
+  color:#10263b;
+}
+:root[data-theme="light"] .brand p,
+:root[data-theme="light"] .helper,
+:root[data-theme="light"] .stat span,
+:root[data-theme="light"] table small,
+:root[data-theme="light"] .participant small{
+  color:#506579;
+}
