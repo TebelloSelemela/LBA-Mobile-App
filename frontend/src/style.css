@@ -504,3 +504,281 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   .live-bracket-head{align-items:flex-start}
   .bracket-view-tools{justify-content:flex-start}
 }
+
+
+/* Professional overview: structured player ranking and participation cards */
+.overview-page{min-width:0}
+.overview-page .stats{
+  gap:12px;
+  margin-bottom:18px;
+}
+.overview-page .stat{
+  margin:0;
+  min-width:0;
+  padding:18px 20px;
+}
+.dashboard-grid>.panel{
+  margin-right:0;
+  min-width:0;
+  overflow:hidden;
+}
+.dashboard-grid .section-head{
+  align-items:center;
+  gap:12px;
+  margin-bottom:12px;
+}
+.text-btn{
+  border:1px solid var(--ui-line);
+  background:transparent;
+  color:var(--ui-green);
+  border-radius:10px;
+  padding:7px 10px;
+  font-size:12px;
+  font-weight:850;
+  cursor:pointer;
+  white-space:nowrap;
+}
+.ranking-list{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.rank-row{
+  display:grid;
+  grid-template-columns:36px 42px minmax(0,1fr) auto;
+  align-items:center;
+  gap:11px;
+  min-width:0;
+  padding:10px 12px;
+  border:1px solid var(--ui-line);
+  border-radius:14px;
+  background:rgba(255,255,255,.025);
+}
+.rank-no{
+  width:32px;
+  height:32px;
+  border-radius:10px;
+  font-size:13px;
+  font-weight:950;
+}
+.avatar{
+  width:40px;
+  height:40px;
+  display:grid;
+  place-items:center;
+  border-radius:50%;
+  border:1px solid rgba(49,211,154,.25);
+  background:rgba(49,211,154,.10);
+  color:var(--ui-green);
+  font-size:12px;
+  font-weight:950;
+  letter-spacing:.04em;
+}
+.rank-name{
+  min-width:0;
+}
+.rank-name b{
+  display:block;
+  font-size:14px;
+  line-height:1.25;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.rank-name small{
+  display:block;
+  color:var(--ui-muted);
+  font-size:11px;
+  line-height:1.35;
+  margin-top:3px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.rank-row>strong:last-child{
+  min-width:72px;
+  text-align:right;
+  font-size:15px;
+  color:var(--ui-text);
+}
+.rank-row>strong:last-child small{
+  display:block;
+  color:var(--ui-muted);
+  font-size:9px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  margin-top:2px;
+}
+.category-list{
+  display:grid;
+  gap:8px;
+  max-height:440px;
+  overflow:auto;
+  padding-right:3px;
+}
+.category-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 54px;
+  align-items:center;
+  gap:10px;
+  min-width:0;
+  padding:11px 12px;
+  border:1px solid var(--ui-line);
+  border-radius:13px;
+  background:rgba(255,255,255,.025);
+}
+.category-row>div{min-width:0}
+.category-row b{
+  display:block;
+  font-size:13px;
+  line-height:1.25;
+  overflow-wrap:anywhere;
+}
+.category-row small{
+  display:block;
+  margin-top:4px;
+  color:var(--ui-muted);
+  font-size:10px;
+  line-height:1.3;
+  overflow-wrap:anywhere;
+}
+.category-row>strong{
+  width:48px;
+  height:38px;
+  display:grid;
+  place-items:center;
+  justify-self:end;
+  border-radius:11px;
+  background:rgba(49,211,154,.10);
+  color:var(--ui-green);
+  font-size:16px;
+  font-weight:950;
+}
+.feature-strip{
+  margin-right:0;
+  padding:16px 18px;
+}
+.feature-strip>div{min-width:0}
+.feature-strip span{line-height:1.4}
+:root[data-theme="light"] .rank-row,
+:root[data-theme="light"] .category-row{background:#f8fbfd}
+:root[data-theme="light"] .avatar{background:#e8f8f2}
+
+/* Tournament cards and reporting controls */
+.tournament-detail-panel .stats{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:10px;
+  margin-bottom:18px;
+}
+.tournament-detail-panel .stat{
+  min-width:0;
+  margin:0;
+  padding:15px 16px;
+  border-radius:16px;
+}
+.tournament-detail-panel .stat span{
+  font-size:11px;
+  line-height:1.25;
+  overflow-wrap:anywhere;
+}
+.tournament-detail-panel .stat b{
+  margin-top:6px;
+  font-size:27px;
+}
+.tournament-report-actions{
+  margin-top:0;
+  justify-content:flex-end;
+  max-width:520px;
+}
+.tournament-report-actions .button{
+  min-height:42px;
+  border-radius:13px;
+  font-size:12px;
+  padding:10px 13px;
+}
+.tournament-event-bar{
+  align-items:center;
+  padding:14px 16px;
+}
+.tournament-event-bar>div:first-child b{
+  font-size:15px;
+  line-height:1.2;
+}
+.event-tabs{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(86px,1fr));
+  gap:7px;
+  width:min(370px,100%);
+}
+.event-tab{
+  width:100%;
+  max-width:none;
+  min-width:0;
+  padding:9px 10px;
+}
+.event-tab b{font-size:13px}
+.event-tab span{
+  font-size:9.5px;
+  line-height:1.25;
+  white-space:normal;
+}
+.round-action-bar{
+  padding:12px 14px;
+  border-radius:14px;
+}
+.round-action-bar .quick-actions{
+  margin-top:0;
+  align-items:center;
+}
+.advance-recovery{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  margin:0;
+  color:var(--ui-muted);
+  background:transparent;
+  border:1px dashed var(--ui-line);
+}
+.live-bracket{
+  border-radius:14px;
+  padding:14px;
+}
+.tournament-fixture{
+  border-radius:14px;
+  padding:14px;
+}
+.tournament-fixture>div:first-of-type{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+}
+.tournament-fixture>div:first-of-type b:last-child{text-align:right}
+
+/* Prevent score controls and tournament cards from colliding at narrower widths */
+@media(max-width:1200px){
+  .tournament-detail-panel>.section-head{flex-direction:column}
+  .tournament-report-actions{justify-content:flex-start;max-width:none}
+  .tournament-event-bar{align-items:stretch;flex-direction:column}
+  .event-tabs{width:100%;grid-template-columns:repeat(5,minmax(72px,1fr))}
+}
+@media(max-width:850px){
+  .rank-row{grid-template-columns:34px 38px minmax(0,1fr)}
+  .rank-row>strong:last-child{grid-column:3;text-align:left;min-width:0}
+  .avatar{width:36px;height:36px}
+  .event-tabs{grid-template-columns:repeat(3,minmax(78px,1fr))}
+}
+@media(max-width:700px){
+  .overview-page .stats,
+  .tournament-detail-panel .stats{grid-template-columns:1fr 1fr}
+  .dashboard-grid{grid-template-columns:1fr!important}
+  .category-list{max-height:none}
+  .feature-strip{align-items:flex-start;flex-direction:column}
+  .event-tabs{grid-template-columns:repeat(2,minmax(90px,1fr))}
+  .tournament-fixture>div:first-of-type{
+    grid-template-columns:1fr;
+    gap:6px;
+    text-align:left;
+  }
+  .tournament-fixture>div:first-of-type b:last-child{text-align:left}
+}
