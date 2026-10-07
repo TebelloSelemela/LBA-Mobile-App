@@ -718,6 +718,7 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
   const [doublesEvent, setDoublesEvent] = useState('All');
   const [doublesTeams, setDoublesTeams] = useState([]);
   const [loadingDoubles, setLoadingDoubles] = useState(false);
+  const [doublesPointInputs, setDoublesPointInputs] = useState({});
 
   async function loadDoublesTeams(event=doublesEvent) {
     setLoadingDoubles(true);
@@ -749,11 +750,32 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
     }
   }
 
+  async function addDoublesPoints(team) {
+    const raw=doublesPointInputs[team.id];
+    const points=Number(raw);
+    if (!raw || Number.isNaN(points)) {
+      if (setMessage) setMessage('Enter valid doubles points for '+team.team_name+'.');
+      return;
+    }
+    try {
+      const data=await api('/doubles/teams/'+team.id+'/points',{
+        method:'POST',
+        body:JSON.stringify({points_delta:points,notes:'Latest doubles tournament points'})
+      });
+      setDoublesPointInputs(current=>({...current,[team.id]:''}));
+      await loadDoublesTeams(doublesEvent);
+      if (setMessage) setMessage(team.team_name+': '+data.old_points+' + '+data.added_points+' = '+data.new_points+' doubles points.');
+    } catch (e) {
+      if (setMessage) setMessage(e.message || 'Could not add doubles points.');
+    }
+  }
+
   const doublesTotals=doublesTeams.reduce((acc,team)=>{
+    acc.points+=Number(team.total_points || 0);
     acc.matches+=Number(team.matches_played || 0);
     acc.wins+=Number(team.wins || 0);
     return acc;
-  },{matches:0,wins:0});
+  },{points:0,matches:0,wins:0});
 
   return <section className="records-page">
     <div className="record-view-tabs" role="tablist" aria-label="Records sections">
@@ -798,7 +820,7 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
       </div>
     </section> : <section className="panel doubles-records-page">
       <div className="section-head records-section-head">
-        <div><span className="eyebrow">PARTNERSHIP HISTORY</span><h3>Doubles Team Records</h3><p>Saved MD, WD and XD pairs can be reused in future tournaments without forcing historical partnerships.</p></div>
+        <div><span className="eyebrow">PARTNERSHIP RANKINGS</span><h3>Doubles Team Records</h3><p>MD, WD and XD are ranked independently by doubles points. These points are separate from each player’s singles ranking points.</p></div>
         <div className="records-filter-actions">
           <select value={doublesEvent} onChange={e=>setDoublesEvent(e.target.value)}>
             <option value="All">All doubles events</option>
@@ -812,19 +834,21 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
 
       <div className="records-summary">
         <div><small>Active saved teams</small><strong>{doublesTeams.length}</strong></div>
+        <div><small>Doubles points</small><strong>{doublesTotals.points.toLocaleString()}</strong></div>
         <div><small>Recorded matches</small><strong>{doublesTotals.matches}</strong></div>
         <div><small>Recorded wins</small><strong>{doublesTotals.wins}</strong></div>
       </div>
 
       <div className="table-wrap doubles-records-table">
         <table>
-          <thead><tr><th>Event</th><th>Team</th><th>Partner 1</th><th>Partner 2</th><th>Played</th><th>Wins</th><th>Losses</th><th>Win %</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Rank</th><th>Event</th><th>Team</th><th>Points</th><th>Add points</th><th>Played</th><th>Wins</th><th>Losses</th><th>Win %</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {doublesTeams.map(team=><tr key={team.id}>
+              <td><strong className="doubles-rank">#{team.rank_position || '-'}</strong></td>
               <td><span className="badge green">{team.event_name}</span></td>
-              <td><b>{team.team_name}</b></td>
-              <td>{team.player_a_name}</td>
-              <td>{team.player_b_name}</td>
+              <td><b>{team.team_name}</b><small>{team.player_a_name} + {team.player_b_name}</small></td>
+              <td><b>{Number(team.total_points || 0).toLocaleString()}</b></td>
+              <td><div className="points-add doubles-points-add"><input type="number" placeholder="+ points" value={doublesPointInputs[team.id] || ''} onChange={e=>setDoublesPointInputs(current=>({...current,[team.id]:e.target.value}))}/><button type="button" className="mini green" onClick={()=>addDoublesPoints(team)}>Add</button></div></td>
               <td>{team.matches_played || 0}</td>
               <td>{team.wins || 0}</td>
               <td>{team.losses || 0}</td>
@@ -1483,17 +1507,23 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     <div className="panel wide tournament-detail-panel">
       {!detail ? <div className="empty"><Trophy size={32}/><h3>Select a tournament</h3><p>Create a tournament on the left, then generate Round 1 and enter results here.</p></div> :
       <>
-        <div className="section-head">
-          <div>
-            <span className="eyebrow">{detail.tournament_code}</span>
-            <h3>{detail.name}</h3>
-            <p>{detail.venue || 'Venue not set'} · {detail.start_date || 'Date not set'} · <b>{detail.status}</b></p>
-            <small className="server-clock">System time: {formatLbaTime(detail.server_time)} · Lesotho / SAST (UTC+02:00)</small>
+        <div className="tournament-overview-head">
+          <div className="tournament-title-row">
+            <div className="tournament-title-copy">
+              <span className="eyebrow">{detail.tournament_code}</span>
+              <h3>{detail.name}</h3>
+            </div>
+            <div className="quick-actions tournament-report-actions">
+              <button className="button" onClick={()=>exportFile('/tournaments/'+detail.id+'/executive-draws.pdf',detail.tournament_code+'_Executive_Draw_Pack.pdf')}><FileText size={16}/> Executive Draw Pack</button>
+              <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/export.xlsx',detail.tournament_code+'_tournament.xlsx')}><Download size={16}/> Results Excel</button>
+              <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/scoresheets.pdf',detail.tournament_code+'_scoresheets.pdf')}><ClipboardList size={16}/> Match Scoresheets</button>
+            </div>
           </div>
-          <div className="quick-actions tournament-report-actions">
-            <button className="button" onClick={()=>exportFile('/tournaments/'+detail.id+'/executive-draws.pdf',detail.tournament_code+'_Executive_Draw_Pack.pdf')}><FileText size={16}/> Executive Draw Pack</button>
-            <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/export.xlsx',detail.tournament_code+'_tournament.xlsx')}><Download size={16}/> Results Excel</button>
-            <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/scoresheets.pdf',detail.tournament_code+'_scoresheets.pdf')}><ClipboardList size={16}/> Match Scoresheets</button>
+          <div className="tournament-meta-strip">
+            <div><small>Venue</small><b>{detail.venue || 'Not set'}</b></div>
+            <div><small>Tournament date</small><b>{detail.start_date || 'Not set'}</b></div>
+            <div><small>Status</small><b>{detail.status}</b></div>
+            <div className="tournament-time-meta"><small>System time · Lesotho / SAST</small><b>{formatLbaTime(detail.server_time)}</b><span>UTC+02:00</span></div>
           </div>
         </div>
 

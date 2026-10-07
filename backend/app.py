@@ -540,8 +540,7 @@ def create_app():
                                 FROM doubles_teams dt
                                 JOIN players pa ON pa.id=dt.player_a_id
                                 JOIN players pb ON pb.id=dt.player_b_id
-                                {where}
-                                ORDER BY dt.event_name,dt.team_name""",args).fetchall()
+                                {where}""",args).fetchall()
 
             completed=con.execute("""SELECT dm.side_a_player_ids,dm.side_b_player_ids,dm.side_a,dm.side_b,dm.winner,d.event_name
                                      FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
@@ -554,17 +553,36 @@ def create_app():
                 ids={int(item["player_a_id"]),int(item["player_b_id"])}
                 played=wins=0
                 for m in completed:
+                    # A partnership only owns results from its own event.
+                    if str(m["event_name"] or "").upper() != str(item["event_name"] or "").upper():
+                        continue
                     a_ids={int(x) for x in str(m["side_a_player_ids"] or "").split(",") if x.strip().isdigit()}
                     b_ids={int(x) for x in str(m["side_b_player_ids"] or "").split(",") if x.strip().isdigit()}
                     if ids==a_ids or ids==b_ids:
                         played+=1
                         if (ids==a_ids and m["winner"]==m["side_a"]) or (ids==b_ids and m["winner"]==m["side_b"]):
                             wins+=1
+                item["total_points"]=float(item.get("total_points") or 0)
                 item["matches_played"]=played
                 item["wins"]=wins
                 item["losses"]=max(0,played-wins)
                 item["win_rate"]=round((wins/played)*100,1) if played else 0
                 output.append(item)
+
+            # MD, WD and XD are separate ranking tables. Points are the primary
+            # ranking key; match wins are only a deterministic tie-breaker.
+            output.sort(key=lambda item: (
+                str(item.get("event_name") or ""),
+                -float(item.get("total_points") or 0),
+                -int(item.get("wins") or 0),
+                -float(item.get("win_rate") or 0),
+                str(item.get("team_name") or "").lower(),
+            ))
+            positions={}
+            for item in output:
+                key=str(item.get("event_name") or "").upper()
+                positions[key]=positions.get(key,0)+1
+                item["rank_position"]=positions[key]
         return jsonify(output)
 
     @app.route("/api/doubles/teams", methods=["POST"])
@@ -598,6 +616,39 @@ def create_app():
                                WHERE dt.event_name=? AND dt.player_a_id=? AND dt.player_b_id=?""",
                             (event,pa["id"],pb["id"])).fetchone()
         return jsonify(dict(row)),201
+
+    @app.route("/api/doubles/teams/<int:team_id>/points", methods=["POST"])
+    @require_auth
+    def add_doubles_team_points(team_id):
+        data=request.get_json(silent=True) or {}
+        delta=nullable_float(data.get("points_delta"))
+        if delta is None:
+            return jsonify({"error":"points_delta is required"}),400
+        note=(data.get("notes") or "Latest doubles tournament points added").strip()
+        with db() as con:
+            team=con.execute("SELECT * FROM doubles_teams WHERE id=?",(team_id,)).fetchone()
+            if not team:
+                return jsonify({"error":"Doubles team not found"}),404
+            old_points=float(team["total_points"] or 0)
+            new_points=old_points+float(delta)
+            if new_points < 0:
+                return jsonify({"error":"Doubles team points cannot be below zero."}),400
+            now=now_iso()
+            con.execute("UPDATE doubles_teams SET total_points=?,updated_at=? WHERE id=?",
+                        (new_points,now,team_id))
+            con.execute("""INSERT INTO audit_logs(actor,action,entity,entity_id,details,created_at)
+                           VALUES(?,?,?,?,?,?)""",
+                        (g.current_user["username"],"ADD_DOUBLES_POINTS","doubles_teams",team_id,
+                         f"{team['event_name']} {team['team_name']}: {old_points} + {delta} = {new_points}. {note}",now))
+            con.commit()
+        return jsonify({
+            "team_id":team_id,
+            "team_name":team["team_name"],
+            "event_name":team["event_name"],
+            "old_points":old_points,
+            "added_points":delta,
+            "new_points":new_points,
+        })
 
     @app.route("/api/doubles/teams/<int:team_id>", methods=["DELETE"])
     @require_auth
@@ -1672,6 +1723,12 @@ def ensure_database():
             con.execute("ALTER TABLE players ADD COLUMN date_of_birth TEXT")
         except sqlite3.OperationalError:
             pass
+        # Doubles rankings use their own team points, separate from singles/player points.
+        # Existing saved partnerships start at zero and keep all match-history statistics.
+        try:
+            con.execute("ALTER TABLE doubles_teams ADD COLUMN total_points REAL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
         con.executescript("""
         CREATE TABLE IF NOT EXISTS players (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1740,6 +1797,7 @@ def ensure_database():
             player_a_id INTEGER NOT NULL,
             player_b_id INTEGER NOT NULL,
             team_name TEXT NOT NULL,
+            total_points REAL NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'Active',
             created_by TEXT,
             created_at TEXT NOT NULL,
