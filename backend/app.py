@@ -1074,6 +1074,42 @@ def create_app():
             result={"match_id":match_id,"winner":winner,"games":[{"game_number":n,"side_a_score":a,"side_b_score":b} for n,a,b in games],"games_won":{"side_a":a_wins,"side_b":b_wins},"status":status,"recorded_by":g.current_user["username"],"recorded_at":now}
         return jsonify(result)
 
+    @app.route("/api/tournaments/<int:tournament_id>/executive-draws.pdf")
+    @require_auth
+    def export_tournament_executive_draws(tournament_id):
+        with db() as con:
+            tournament=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+            if not tournament:
+                return jsonify({"error":"Tournament not found"}),404
+
+            rows=con.execute("""SELECT dm.*,d.event_name,d.round_name,d.round_number,d.stage,d.draw_type,d.category_code
+                                FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
+                                WHERE d.tournament_id=?
+                                ORDER BY CASE UPPER(COALESCE(d.event_name,'MS'))
+                                    WHEN 'MS' THEN 1 WHEN 'WS' THEN 2 WHEN 'MD' THEN 3 WHEN 'WD' THEN 4 WHEN 'XD' THEN 5 ELSE 9 END,
+                                    d.round_number,dm.match_no,dm.id""",
+                             (tournament_id,)).fetchall()
+            if not rows:
+                return jsonify({"error":"This tournament does not have any event draws yet."}),404
+
+            event_matches={}
+            for row in rows:
+                item=dict(row)
+                item["games"]=[dict(gm) for gm in con.execute(
+                    "SELECT game_number,side_a_score,side_b_score FROM match_games WHERE match_id=? ORDER BY game_number",
+                    (row["id"],)
+                ).fetchall()]
+                event=(item.get("event_name") or "MS").upper()
+                event_matches.setdefault(event,[]).append(item)
+
+        pdf_bytes=build_executive_draw_pack_pdf(dict(tournament),event_matches)
+        filename=safe_filename(f"{tournament['name']}_Executive_Draw_Pack.pdf")
+        return Response(
+            pdf_bytes,
+            mimetype="application/pdf",
+            headers={"Content-Disposition":f"attachment; filename={filename}"}
+        )
+
     @app.route("/api/tournaments/<int:tournament_id>/scoresheets.pdf")
     @require_auth
     def export_tournament_scoresheets(tournament_id):
@@ -1758,13 +1794,7 @@ def _pdf_fit_text(c, text, font_name, font_size, max_width):
     return (value + suffix) if value else suffix
 
 
-def build_progressive_bracket_pdf(tournament, event_name, matches, cutoff_round=None):
-    """Export a category/event as a true progressive knockout bracket.
-
-    Actual rounds are filled through cutoff_round. All later rounds remain
-    visible as empty standby paths so officials can export a fresh sheet after
-    each newly generated round without changing the bracket structure.
-    """
+def _prepare_progressive_bracket(event_name, matches, cutoff_round=None):
     event_name = (event_name or "MS").upper()
     filtered = [
         dict(m) for m in (matches or [])
@@ -1825,15 +1855,28 @@ def build_progressive_bracket_pdf(tournament, event_name, matches, cutoff_round=
             items.append(item)
         rounds.append({"number": round_number, "stage": stage, "matches": items})
 
-    page_size = landscape(A2 if first_count > 16 else A3)
+    return {
+        "event_name": event_name,
+        "first_count": first_count,
+        "total_rounds": total_rounds,
+        "cutoff_round": cutoff_round,
+        "rounds": rounds,
+        "page_size": landscape(A2 if first_count > 16 else A3),
+    }
+
+
+def _draw_progressive_bracket_page(c, tournament, prepared, executive_pack=False):
+    event_name = prepared["event_name"]
+    first_count = prepared["first_count"]
+    total_rounds = prepared["total_rounds"]
+    cutoff_round = prepared["cutoff_round"]
+    rounds = prepared["rounds"]
+    page_size = prepared["page_size"]
+    c.setPageSize(page_size)
     page_w, page_h = page_size
-    buffer = io.BytesIO()
-    c = pdfcanvas.Canvas(buffer, pagesize=page_size)
-    c.setTitle(f"{tournament.get('name','LBA Tournament')} - {event_name} Progressive Draw")
 
     navy = colors.HexColor("#0f172a")
     green = colors.HexColor("#047857")
-    green_light = colors.HexColor("#d1fae5")
     line = colors.HexColor("#64748b")
     border = colors.HexColor("#94a3b8")
     muted = colors.HexColor("#475569")
@@ -1849,7 +1892,6 @@ def build_progressive_bracket_pdf(tournament, event_name, matches, cutoff_round=
     row_unit = usable_h / first_count
     card_h = min(38, max(20, row_unit * 0.74))
 
-    # Header
     logo_x = margin
     if LOGO_PATH.exists():
         try:
@@ -1857,12 +1899,14 @@ def build_progressive_bracket_pdf(tournament, event_name, matches, cutoff_round=
             logo_x += 54
         except Exception:
             pass
+
     c.setFillColor(navy)
     c.setFont("Helvetica-Bold", 18)
     c.drawString(logo_x, page_h - 33, "Lesotho Badminton Association")
     c.setFont("Helvetica-Bold", 12)
     c.setFillColor(green)
-    c.drawString(logo_x, page_h - 51, "Official Progressive Tournament Draw")
+    c.drawString(logo_x, page_h - 51, "Executive Tournament Draw Pack" if executive_pack else "Official Progressive Tournament Draw")
+
     c.setFillColor(navy)
     c.setFont("Helvetica-Bold", 11)
     c.drawRightString(page_w - margin, page_h - 31, str(tournament.get("name") or "Tournament"))
@@ -1883,7 +1927,6 @@ def build_progressive_bracket_pdf(tournament, event_name, matches, cutoff_round=
         y = center - card_h / 2
         return x, y, center
 
-    # Connectors first so cards sit cleanly on top.
     c.setStrokeColor(line)
     c.setLineWidth(0.8)
     for r in range(total_rounds - 1):
@@ -1897,7 +1940,6 @@ def build_progressive_bracket_pdf(tournament, event_name, matches, cutoff_round=
             c.line(mid_x, y1, mid_x, y2)
             c.line(mid_x, y2, end_x, y2)
 
-    # Column headings and match cards.
     for r, round_data in enumerate(rounds):
         x = margin + r * (col_w + gap)
         c.setFillColor(navy)
@@ -1946,12 +1988,115 @@ def build_progressive_bracket_pdf(tournament, event_name, matches, cutoff_round=
                 c.setFont("Helvetica", 5.8)
                 c.drawRightString(x + col_w - 5, y + 4, _pdf_fit_text(c, score, "Helvetica", 5.8, col_w * 0.55))
 
-    # Footer
     c.setFillColor(muted)
     c.setFont("Helvetica", 7)
     c.drawString(margin, 9, f"{event_name} bracket snapshot - filled through {latest_stage}. Future rounds remain on standby.")
     c.drawRightString(page_w - margin, 9, "Generated by LBA Tournament System")
+
+
+def build_progressive_bracket_pdf(tournament, event_name, matches, cutoff_round=None):
+    prepared = _prepare_progressive_bracket(event_name, matches, cutoff_round)
+    buffer = io.BytesIO()
+    c = pdfcanvas.Canvas(buffer, pagesize=prepared["page_size"])
+    c.setTitle(f"{tournament.get('name','LBA Tournament')} - {prepared['event_name']} Progressive Draw")
+    _draw_progressive_bracket_page(c, tournament, prepared, executive_pack=False)
     c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def build_executive_draw_pack_pdf(tournament, event_matches):
+    """One-click executive PDF: cover summary plus every event bracket."""
+    event_order = ["MS", "WS", "MD", "WD", "XD"]
+    prepared_events = []
+    for event_name in event_order:
+        matches = event_matches.get(event_name) or []
+        if not matches:
+            continue
+        latest = max(int(m.get("round_number") or 1) for m in matches)
+        prepared_events.append(_prepare_progressive_bracket(event_name, matches, latest))
+
+    if not prepared_events:
+        raise ValueError("No event draws are available for this tournament.")
+
+    buffer = io.BytesIO()
+    c = pdfcanvas.Canvas(buffer, pagesize=A4)
+    c.setTitle(f"{tournament.get('name','LBA Tournament')} - Executive Draw Pack")
+
+    navy = colors.HexColor("#0f172a")
+    green = colors.HexColor("#047857")
+    muted = colors.HexColor("#475569")
+    border = colors.HexColor("#cbd5e1")
+
+    # Executive cover page.
+    c.setPageSize(A4)
+    page_w, page_h = A4
+    margin = 38
+    if LOGO_PATH.exists():
+        try:
+            c.drawImage(str(LOGO_PATH), margin, page_h - 92, width=56, height=56, preserveAspectRatio=True, mask="auto")
+        except Exception:
+            pass
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(margin + 68, page_h - 54, "Lesotho Badminton Association")
+    c.setFillColor(green)
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(margin + 68, page_h - 74, "Executive Tournament Draw Pack")
+    c.setStrokeColor(border)
+    c.line(margin, page_h - 105, page_w - margin, page_h - 105)
+
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(margin, page_h - 142, str(tournament.get("name") or "Tournament"))
+    c.setFont("Helvetica", 10)
+    c.setFillColor(muted)
+    c.drawString(margin, page_h - 160, f"Code: {tournament.get('tournament_code') or '-'}")
+    c.drawString(margin, page_h - 176, f"Venue: {tournament.get('venue') or '-'}")
+    c.drawString(margin, page_h - 192, f"Date: {tournament.get('start_date') or '-'}")
+    c.drawString(margin, page_h - 208, f"Status: {tournament.get('status') or '-'}")
+    c.drawString(margin, page_h - 224, f"Generated: {now_iso()}")
+
+    y = page_h - 270
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(margin, y, "EVENT")
+    c.drawString(margin + 65, y, "LATEST ROUND")
+    c.drawString(margin + 190, y, "MATCHES")
+    c.drawString(margin + 255, y, "COMPLETED")
+    c.drawString(margin + 335, y, "STATUS")
+    c.setStrokeColor(border)
+    c.line(margin, y - 6, page_w - margin, y - 6)
+
+    y -= 28
+    for prepared in prepared_events:
+        event_name = prepared["event_name"]
+        matches = event_matches.get(event_name) or []
+        completed = sum(1 for m in matches if m.get("status") == "Completed")
+        total = len(matches)
+        latest_stage = prepared["rounds"][prepared["cutoff_round"] - 1]["stage"]
+        final_done = any(m.get("stage") == "Final" and int(m.get("match_no") or 0) != 3 and m.get("status") == "Completed" for m in matches)
+        c.setFillColor(navy)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(margin, y, event_name)
+        c.setFont("Helvetica", 9)
+        c.drawString(margin + 65, y, latest_stage)
+        c.drawString(margin + 190, y, str(total))
+        c.drawString(margin + 255, y, str(completed))
+        c.setFillColor(green if final_done else muted)
+        c.drawString(margin + 335, y, "Complete" if final_done else "In progress")
+        y -= 24
+
+    c.setFillColor(muted)
+    c.setFont("Helvetica", 8)
+    c.drawString(margin, 34, "The following pages contain the latest available draw for each event, with future bracket paths retained through the Final.")
+    c.showPage()
+
+    for prepared in prepared_events:
+        _draw_progressive_bracket_page(c, tournament, prepared, executive_pack=True)
+        c.showPage()
+
     c.save()
     buffer.seek(0)
     return buffer.getvalue()
