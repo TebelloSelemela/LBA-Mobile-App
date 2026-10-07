@@ -46,14 +46,53 @@ async function api(path, options = {}) {
   return data;
 }
 
+function calculateAgeFromDob(dateOfBirth) {
+  if (!dateOfBirth) return null;
+  const parts=String(dateOfBirth).split('-').map(Number);
+  if (parts.length!==3 || parts.some(Number.isNaN)) return null;
+  const [year,month,day]=parts;
+  const today=new Date();
+  let age=today.getFullYear()-year;
+  if ((today.getMonth()+1)<month || ((today.getMonth()+1)===month && today.getDate()<day)) age-=1;
+  return age>=0 && age<=120 ? age : null;
+}
+
+function automaticAgeGroup(age) {
+  if (age===null || age===undefined) return '';
+  if (age<=10) return 'U11';
+  if (age<=12) return 'U13';
+  if (age<=14) return 'U15';
+  if (age<=16) return 'U17';
+  return '18+';
+}
+
+function automaticCategory(gender, ageGroup) {
+  if (!ageGroup) return '';
+  const value=String(gender || '').toLowerCase();
+  if (['men','male','boy','boys'].includes(value)) return 'MS,'+ageGroup;
+  if (['women','woman','female','girl','girls'].includes(value)) return 'WS,'+ageGroup;
+  return '';
+}
+
+function applyPlayerClassification(current, changes={}) {
+  const next={...current,...changes};
+  const age=calculateAgeFromDob(next.date_of_birth);
+  if (age===null) return {...next,age:null,age_group:'',category_code:''};
+  const age_group=automaticAgeGroup(age);
+  const category_code=automaticCategory(next.gender,age_group);
+  return {...next,age,age_group,category_code};
+}
+
 function emptyForm() {
   return {
     full_name: '',
     first_name: '',
     last_name: '',
-    category_code: 'MS,U15',
+    category_code: '',
     gender: 'Men',
-    age_group: 'U15',
+    age_group: '',
+    date_of_birth: '',
+    age: null,
     club: '',
     rank_position: '',
     total_points: '',
@@ -230,12 +269,16 @@ function App() {
 
   async function savePlayer(e) {
     e.preventDefault();
+    if (!form.date_of_birth) {
+      setMessage('Enter the player’s date of birth. Age group and category are calculated automatically.');
+      return;
+    }
     try {
       const method = form.id ? 'PUT' : 'POST';
       const path = form.id ? `/players/${form.id}` : '/players';
-      await api(path, { method, body: JSON.stringify(form) });
+      const saved=await api(path, { method, body: JSON.stringify(form) });
       setForm(emptyForm());
-      setMessage(form.id ? 'Player record updated.' : 'Player record added.');
+      setMessage(`${saved.full_name} saved as ${saved.category_code} · ${saved.age_group} · age ${saved.age}.`);
       loadAll();
     } catch (err) {
       setMessage(err.message);
@@ -513,9 +556,9 @@ function Overview({ dashboard, players, draws, setActiveTab, exportFile }) {
     {
       key:'youngest',
       icon:<UserRound size={18}/>,
-      label:'Youngest player group',
-      value:insights.youngestPlayer?.full_name || 'Age group unavailable',
-      meta:insights.youngestPlayer?.age_basis || 'Add age-group information to player records.',
+      label:'Youngest player',
+      value:insights.youngestPlayer?.full_name || 'DOB unavailable',
+      meta:insights.youngestPlayer?.age_basis || 'Add date of birth to player records.',
       detail:insights.youngestPlayer ? [insights.youngestPlayer.category_code,insights.youngestPlayer.club || 'Independent'].filter(Boolean).join(' · ') : ''
     },
     {
@@ -556,7 +599,7 @@ function Overview({ dashboard, players, draws, setActiveTab, exportFile }) {
             <div className="insight-copy"><small>{card.label}</small><b>{card.value}</b><span>{card.meta}</span>{card.detail&&<em>{card.detail}</em>}</div>
           </div>)}
         </div>
-        <p className="analytics-note">“Rising player” uses positive points added in the last 90 days. “In-form player” uses recent completed match results. The youngest insight is age-group based because exact dates of birth are not stored.</p>
+        <p className="analytics-note">“Rising player” uses positive points added in the last 90 days. “In-form player” uses recent completed match results. “Youngest player” uses exact date of birth where it has been recorded.</p>
       </> : <div className="pulse-grid">
         {pulseCards.map(card=><div className="pulse-card" key={card.label}><small>{card.label}</small><strong>{card.value}</strong><span>{card.meta}</span></div>)}
       </div>}
@@ -724,8 +767,19 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
         <form onSubmit={savePlayer} className="form">
           <Input label="Full name" value={form.full_name} onChange={v => setForm({ ...form, full_name: v })}/>
           <div className="form-row"><Input label="First name" value={form.first_name} onChange={v => setForm({ ...form, first_name: v })}/><Input label="Last name" value={form.last_name} onChange={v => setForm({ ...form, last_name: v })}/></div>
-          <div className="form-row"><Input label="Category" value={form.category_code} onChange={v => setForm({ ...form, category_code: v })}/><Input label="Age group" value={form.age_group} onChange={v => setForm({ ...form, age_group: v })}/></div>
-          <div className="form-row"><Input label="Gender" value={form.gender} onChange={v => setForm({ ...form, gender: v })}/><Input label="Club" value={form.club} onChange={v => setForm({ ...form, club: v })}/></div>
+          <div className="form-row">
+            <Input label="Date of birth" type="date" max={new Date().toISOString().slice(0,10)} value={form.date_of_birth} onChange={v => setForm(current=>applyPlayerClassification(current,{date_of_birth:v}))}/>
+            <Input label="Calculated age" value={form.age ?? ''} readOnly placeholder="From date of birth"/>
+          </div>
+          <div className="form-row">
+            <label><span>Gender</span><select value={form.gender || 'Men'} onChange={e=>setForm(current=>applyPlayerClassification(current,{gender:e.target.value}))}><option value="Men">Men / Boys</option><option value="Women">Women / Girls</option></select></label>
+            <Input label="Club" value={form.club} onChange={v => setForm({ ...form, club: v })}/>
+          </div>
+          <div className="form-row">
+            <Input label="Automatic category" value={form.category_code || 'Enter DOB'} readOnly/>
+            <Input label="Automatic age group" value={form.age_group || 'Enter DOB'} readOnly/>
+          </div>
+          <div className="classification-note"><CheckCircle2 size={15}/><span>Date of birth is the age source. When the player outgrows an age group, the system automatically moves the record to the next category.</span></div>
           <div className="form-row"><Input label="Rank" type="number" value={form.rank_position} onChange={v => setForm({ ...form, rank_position: v })}/><Input label="Total points correction" type="number" value={form.total_points} onChange={v => setForm({ ...form, total_points: v })}/></div>
           <p className="helper">Use the table's “Add points” box to add latest tournament points. Example: 120 + 20 = 140.</p>
           <label><span>Status</span><select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}><option>Active</option><option>Inactive</option></select></label>
@@ -740,7 +794,7 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
           <select value={filters.status} onChange={e => setFilters({ ...filters, status: e.target.value })}><option>All</option><option>Active</option><option>Inactive</option></select>
           <button className="icon-btn" onClick={loadAll}><RefreshCw size={16}/></button>
         </div>
-        <div className="table-wrap"><table><thead><tr><th>Rank</th><th>Name</th><th>Category</th><th>Club</th><th>Points</th><th>Add latest points</th><th>Status</th><th></th></tr></thead><tbody>{players.map(p => <tr key={p.id}><td>#{p.rank_position || '-'}</td><td><b>{p.full_name}</b><small>{p.gender} · {p.age_group}</small></td><td>{p.category_code}</td><td>{p.club || '-'}</td><td><b>{p.total_points}</b></td><td><div className="points-add"><input type="number" placeholder="+ points" value={pointInputs[p.id] || ''} onChange={e => setPointInputs(current => ({ ...current, [p.id]: e.target.value }))}/><button className="mini green" onClick={() => addPoints(p)}>Add</button></div></td><td><span className={p.status === 'Active' ? 'badge green' : 'badge'}>{p.status}</span></td><td><button className="mini" onClick={() => setForm(p)}>Edit</button><button className="mini danger" onClick={() => deletePlayer(p.id)}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div>
+        <div className="table-wrap"><table><thead><tr><th>Rank</th><th>Name</th><th>Category</th><th>Club</th><th>Points</th><th>Add latest points</th><th>Status</th><th></th></tr></thead><tbody>{players.map(p => <tr key={p.id}><td>#{p.rank_position || '-'}</td><td><b>{p.full_name}</b><small>{p.gender} · {p.age_group}{p.age!==null && p.age!==undefined ? ' · '+p.age+' yrs' : ' · DOB needed'}</small></td><td>{p.category_code}</td><td>{p.club || '-'}</td><td><b>{p.total_points}</b></td><td><div className="points-add"><input type="number" placeholder="+ points" value={pointInputs[p.id] || ''} onChange={e => setPointInputs(current => ({ ...current, [p.id]: e.target.value }))}/><button className="mini green" onClick={() => addPoints(p)}>Add</button></div></td><td><span className={p.status === 'Active' ? 'badge green' : 'badge'}>{p.status}</span></td><td><button className="mini" onClick={() => setForm({...emptyForm(),...p})}>Edit</button><button className="mini danger" onClick={() => deletePlayer(p.id)}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div>
       </div>
     </section> : <section className="panel doubles-records-page">
       <div className="section-head records-section-head">
@@ -1729,6 +1783,6 @@ function Reports() {
 }
 
 function Stat({ label, value }) { return <div className="stat"><span>{label}</span><b>{value}</b></div>; }
-function Input({ label, value, onChange, type = 'text', min, max, step, inputMode }) { return <label><span>{label}</span><input type={type} min={min} max={max} step={step} inputMode={inputMode} value={value ?? ''} onChange={e => onChange(e.target.value)} /></label>; }
+function Input({ label, value, onChange=()=>{}, type = 'text', min, max, step, inputMode, readOnly=false, placeholder='' }) { return <label><span>{label}</span><input type={type} min={min} max={max} step={step} inputMode={inputMode} value={value ?? ''} readOnly={readOnly} placeholder={placeholder} className={readOnly?'readonly-input':''} onChange={e => onChange(e.target.value)} /></label>; }
 
 createRoot(document.getElementById('root')).render(<App />);

@@ -304,6 +304,7 @@ def create_app():
     @require_auth
     def dashboard():
         with db() as con:
+            sync_player_age_categories(con)
             total = con.execute("SELECT COUNT(*) FROM players").fetchone()[0]
             active = con.execute("SELECT COUNT(*) FROM players WHERE status='Active'").fetchone()[0]
             categories = con.execute("SELECT COUNT(DISTINCT category_code) FROM players WHERE category_code IS NOT NULL AND category_code!=''").fetchone()[0]
@@ -319,7 +320,7 @@ def create_app():
 
             player_rows = con.execute("""
                 SELECT id,full_name,category_code,club,rank_position,total_points,
-                       tournaments_played,status,age_group,gender
+                       tournaments_played,status,age_group,gender,date_of_birth
                 FROM players
                 WHERE status='Active'
             """).fetchall()
@@ -410,30 +411,56 @@ def create_app():
                 in_form["recent_matches"] = stat["matches"]
                 in_form["win_rate"] = round((stat["wins"] / stat["matches"]) * 100, 1)
 
-            # Exact dates of birth are not stored. The youngest insight is
-            # therefore based only on the age-group field already in records.
-            def age_group_order(value):
-                text = str(value or "").upper().replace(" ", "")
-                match = re.search(r"U(\d{1,2})", text)
-                if match:
-                    return int(match.group(1))
-                if text.startswith("JUNIOR"):
-                    return 17
-                if "18+" in text or text == "18":
-                    return 18
-                return 999
+            # Prefer exact DOB for the youngest-player insight. Legacy records
+            # without DOB keep the older age-group fallback until an admin adds DOB.
+            dob_candidates = []
+            for p in player_map.values():
+                dob_text = str(p.get("date_of_birth") or "").strip()
+                if not dob_text:
+                    continue
+                try:
+                    dob_value = parse_date_of_birth(dob_text)
+                    item = dict(p)
+                    item["age"] = calculate_age(dob_text)
+                    item["_dob_value"] = dob_value
+                    dob_candidates.append(item)
+                except ValueError:
+                    continue
 
-            age_candidates = [p for p in player_map.values() if age_group_order(p.get("age_group")) < 999]
             youngest = None
-            if age_candidates:
-                age_candidates.sort(key=lambda p: (
-                    age_group_order(p.get("age_group")),
-                    int(p.get("rank_position") or 999999),
-                    -float(p.get("total_points") or 0),
-                    str(p.get("full_name") or ""),
-                ))
-                youngest = dict(age_candidates[0])
-                youngest["age_basis"] = f"{youngest.get('age_group') or 'Youth'} age group"
+            if dob_candidates:
+                youngest = max(
+                    dob_candidates,
+                    key=lambda p: (
+                        p["_dob_value"],
+                        -int(p.get("rank_position") or 999999),
+                        float(p.get("total_points") or 0),
+                    )
+                )
+                youngest.pop("_dob_value", None)
+                youngest["age_basis"] = f"{youngest.get('age')} years old · DOB {youngest.get('date_of_birth')}"
+            else:
+                def age_group_order(value):
+                    text = str(value or "").upper().replace(" ", "")
+                    match = re.search(r"U(\d{1,2})", text)
+                    if match:
+                        return int(match.group(1))
+                    if text.startswith("JUNIOR"):
+                        return 17
+                    if "18+" in text or text == "18":
+                        return 18
+                    return 999
+
+                age_candidates = [p for p in player_map.values() if age_group_order(p.get("age_group")) < 999]
+                if age_candidates:
+                    age_candidates.sort(key=lambda p: (
+                        age_group_order(p.get("age_group")),
+                        int(p.get("rank_position") or 999999),
+                        -float(p.get("total_points") or 0),
+                        str(p.get("full_name") or ""),
+                    ))
+                    youngest = dict(age_candidates[0])
+                    youngest["age_basis"] = f"{youngest.get('age_group') or 'Youth'} age group · DOB not recorded"
 
             most_active = None
             if player_rows:
@@ -485,7 +512,7 @@ def create_app():
                 "inFormPlayer": in_form,
                 "youngestPlayer": youngest,
                 "mostActivePlayer": most_active,
-                "youngestBasis": "Age-group based; exact date of birth is not currently stored."
+                "youngestBasis": "Exact DOB where recorded; legacy records use their saved age group until DOB is added."
             },
             "tournamentPulse": {
                 "totalTournaments": int(tournament_counts["total_tournaments"] or 0),
@@ -587,6 +614,7 @@ def create_app():
     @require_auth
     def categories():
         with db() as con:
+            sync_player_age_categories(con)
             rows = con.execute("""
                 SELECT category_code, event_type, gender, age_group, COUNT(*) AS player_count
                 FROM players
@@ -615,42 +643,59 @@ def create_app():
             args.extend([like, like, like, like, like])
         sql += " ORDER BY COALESCE(rank_position, 999999), full_name"
         with db() as con:
+            sync_player_age_categories(con)
             rows = con.execute(sql, args).fetchall()
-        return jsonify([dict(row) for row in rows])
+        return jsonify([serialize_player(row) for row in rows])
 
     @app.route("/api/players", methods=["POST"])
     @require_auth
     def create_player():
-        payload = clean_player_payload(request.get_json(silent=True) or {})
+        data = request.get_json(silent=True) or {}
+        if not str(data.get("date_of_birth") or "").strip():
+            return jsonify({"error": "Date of birth is required for new player records."}), 400
+        try:
+            payload = clean_player_payload(data)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         with db() as con:
             cur = con.execute("""
-                INSERT INTO players(category_code,event_type,gender,age_group,club,rank_position,first_name,last_name,full_name,total_points,tournaments_played,status,notes,created_at,updated_at)
-                VALUES(:category_code,:event_type,:gender,:age_group,:club,:rank_position,:first_name,:last_name,:full_name,:total_points,:tournaments_played,:status,:notes,:created_at,:updated_at)
+                INSERT INTO players(category_code,event_type,gender,age_group,date_of_birth,club,rank_position,first_name,last_name,full_name,total_points,tournaments_played,status,notes,created_at,updated_at)
+                VALUES(:category_code,:event_type,:gender,:age_group,:date_of_birth,:club,:rank_position,:first_name,:last_name,:full_name,:total_points,:tournaments_played,:status,:notes,:created_at,:updated_at)
             """, payload)
             con.commit()
             player = con.execute("SELECT * FROM players WHERE id=?", (cur.lastrowid,)).fetchone()
-        return jsonify(dict(player)), 201
+        return jsonify(serialize_player(player)), 201
 
     @app.route("/api/players/<int:player_id>", methods=["PUT"])
     @require_auth
     def update_player(player_id):
-        payload = clean_player_payload(request.get_json(silent=True) or {}, updating=True)
-        payload["id"] = player_id
+        data = request.get_json(silent=True) or {}
         with db() as con:
-            found = con.execute("SELECT id FROM players WHERE id=?", (player_id,)).fetchone()
+            found = con.execute("SELECT * FROM players WHERE id=?", (player_id,)).fetchone()
             if not found:
                 return jsonify({"error": "Player not found"}), 404
+
+            # Merge the stored record first so older clients can still edit
+            # legacy players while DOB is gradually completed by admins.
+            merged = dict(found)
+            merged.update(data)
+            try:
+                payload = clean_player_payload(merged, updating=True)
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+            payload["id"] = player_id
+
             con.execute("""
                 UPDATE players SET
                     category_code=:category_code,event_type=:event_type,gender=:gender,age_group=:age_group,
-                    club=:club,rank_position=:rank_position,first_name=:first_name,last_name=:last_name,
+                    date_of_birth=:date_of_birth,club=:club,rank_position=:rank_position,first_name=:first_name,last_name=:last_name,
                     full_name=:full_name,total_points=:total_points,tournaments_played=:tournaments_played,
                     status=:status,notes=:notes,updated_at=:updated_at
                 WHERE id=:id
             """, payload)
             con.commit()
             player = con.execute("SELECT * FROM players WHERE id=?", (player_id,)).fetchone()
-        return jsonify(dict(player))
+        return jsonify(serialize_player(player))
 
 
     @app.route("/api/players/<int:player_id>/points", methods=["POST"])
@@ -855,6 +900,7 @@ def create_app():
         event_name=(data.get("event_name") or "").strip()
         requested_round=(data.get("round_name") or "").strip()
         with db() as con:
+            sync_player_age_categories(con)
             if tournament_id and not con.execute("SELECT id FROM tournaments WHERE id=?",(tournament_id,)).fetchone():
                 return jsonify({"error":"Tournament not found"}),404
             if tournament_id:
@@ -1620,6 +1666,12 @@ def ensure_database():
                 con.execute(f"ALTER TABLE draw_matches ADD COLUMN {column} {definition}")
             except sqlite3.OperationalError:
                 pass
+        # Date of birth is the only age source for new manually-created players.
+        # Existing databases are migrated in-place without disturbing legacy records.
+        try:
+            con.execute("ALTER TABLE players ADD COLUMN date_of_birth TEXT")
+        except sqlite3.OperationalError:
+            pass
         con.executescript("""
         CREATE TABLE IF NOT EXISTS players (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1628,6 +1680,7 @@ def ensure_database():
             event_type TEXT,
             gender TEXT,
             age_group TEXT,
+            date_of_birth TEXT,
             club TEXT,
             rank_position INTEGER,
             first_name TEXT,
@@ -1816,6 +1869,125 @@ def ensure_database():
         con.commit()
 
 
+def parse_date_of_birth(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        dob = datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError("Date of birth must use YYYY-MM-DD format.")
+    today = datetime.now(ZoneInfo("Africa/Maseru")).date()
+    if dob > today:
+        raise ValueError("Date of birth cannot be in the future.")
+    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    if age < 0 or age > 120:
+        raise ValueError("Enter a valid date of birth.")
+    return dob
+
+
+def calculate_age(date_of_birth):
+    dob = parse_date_of_birth(date_of_birth)
+    if not dob:
+        return None
+    today = datetime.now(ZoneInfo("Africa/Maseru")).date()
+    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
+
+def age_group_from_age(age):
+    if age is None:
+        return None
+    if age <= 10:
+        return "U11"
+    if age <= 12:
+        return "U13"
+    if age <= 14:
+        return "U15"
+    if age <= 16:
+        return "U17"
+    return "18+"
+
+
+def category_from_gender_age(gender, age_group, fallback_category=""):
+    gender_text = str(gender or "").strip().lower()
+    fallback = str(fallback_category or "").strip().upper()
+    if gender_text in {"men", "male", "boy", "boys"}:
+        prefix = "MS"
+    elif gender_text in {"women", "woman", "female", "girl", "girls"}:
+        prefix = "WS"
+    elif fallback.startswith("MS"):
+        prefix = "MS"
+    elif fallback.startswith("WS"):
+        prefix = "WS"
+    else:
+        return fallback_category or "Uncategorised"
+    return f"{prefix},{age_group}" if age_group else prefix
+
+
+def classify_player_age(gender, date_of_birth, fallback_category=""):
+    age = calculate_age(date_of_birth)
+    if age is None:
+        return None
+    age_group = age_group_from_age(age)
+    category_code = category_from_gender_age(gender, age_group, fallback_category)
+    return {
+        "age": age,
+        "age_group": age_group,
+        "category_code": category_code,
+        "event_type": infer_event_type(category_code),
+    }
+
+
+def serialize_player(row):
+    item = dict(row)
+    dob = item.get("date_of_birth")
+    if dob:
+        try:
+            item["age"] = calculate_age(dob)
+        except ValueError:
+            item["age"] = None
+    else:
+        item["age"] = None
+    return item
+
+
+def sync_player_age_categories(con):
+    """Promote DOB-backed players to the correct age category as time passes."""
+    rows = con.execute("""
+        SELECT id,gender,date_of_birth,category_code,age_group,event_type
+        FROM players
+        WHERE date_of_birth IS NOT NULL AND TRIM(date_of_birth)!=''
+    """).fetchall()
+    changed = 0
+    now = now_iso()
+    for row in rows:
+        try:
+            classification = classify_player_age(
+                row["gender"], row["date_of_birth"], row["category_code"]
+            )
+        except ValueError:
+            continue
+        if not classification:
+            continue
+        category_code = classification["category_code"]
+        age_group = classification["age_group"]
+        event_type = classification["event_type"]
+        if (
+            str(row["category_code"] or "") != str(category_code or "")
+            or str(row["age_group"] or "") != str(age_group or "")
+            or str(row["event_type"] or "") != str(event_type or "")
+        ):
+            con.execute("""
+                UPDATE players
+                SET category_code=?,age_group=?,event_type=?,updated_at=?
+                WHERE id=?
+            """, (category_code, age_group, event_type, now, row["id"]))
+            changed += 1
+    if changed:
+        con.commit()
+    return changed
+
+
 def clean_player_payload(data, updating=False):
     full_name = (data.get("full_name") or data.get("name") or "").strip()
     first_name = (data.get("first_name") or "").strip()
@@ -1828,16 +2000,33 @@ def clean_player_payload(data, updating=False):
         parts = full_name.split()
         first_name = parts[0]
         last_name = " ".join(parts[1:]) if len(parts) > 1 else last_name
+
+    date_of_birth = str(data.get("date_of_birth") or "").strip()
     category_code = (data.get("category_code") or data.get("category") or "Uncategorised").strip()
-    event_type = (data.get("event_type") or infer_event_type(category_code)).strip()
     gender = (data.get("gender") or infer_gender(category_code)).strip()
-    age_group = (data.get("age_group") or infer_age_group(category_code)).strip()
+
+    classification = None
+    if date_of_birth:
+        # Validation is intentional here: DOB becomes the source of truth for
+        # age group and singles category rather than manual age/category text.
+        parse_date_of_birth(date_of_birth)
+        classification = classify_player_age(gender, date_of_birth, category_code)
+
+    if classification:
+        category_code = classification["category_code"]
+        age_group = classification["age_group"]
+        event_type = classification["event_type"]
+    else:
+        event_type = (data.get("event_type") or infer_event_type(category_code)).strip()
+        age_group = (data.get("age_group") or infer_age_group(category_code)).strip()
+
     now = now_iso()
     return {
         "category_code": category_code,
         "event_type": event_type,
         "gender": gender,
         "age_group": age_group,
+        "date_of_birth": date_of_birth or None,
         "club": (data.get("club") or "").strip(),
         "rank_position": nullable_int(data.get("rank_position", data.get("rank"))),
         "first_name": first_name,
