@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users, Home, Menu, X, Sun, Moon, ShieldCheck, CalendarDays, CheckCircle2, ClipboardList, MonitorPlay, Maximize, Minimize } from 'lucide-react';
+import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users, Home, Menu, X, Sun, Moon, ShieldCheck, CalendarDays, CheckCircle2, ClipboardList, MonitorPlay, Maximize, Minimize, TrendingUp, Activity, UserRound, BarChart3 } from 'lucide-react';
 import './style.css';
 import logo from './assets/lba-logo.png';
 
@@ -486,14 +486,96 @@ function ProjectorScreen({ draws, tournaments, refresh }) {
 
 
 function Overview({ dashboard, players, draws, setActiveTab, exportFile }) {
+  const [insightTab, setInsightTab] = useState('players');
   const top = dashboard?.topPlayers || [];
   const categories = dashboard?.categoryBreakdown || [];
+  const insights = dashboard?.insights || {};
+  const pulse = dashboard?.tournamentPulse || {};
+  const completionRate = pulse.totalMatches ? Math.round((Number(pulse.completedMatches || 0) / Number(pulse.totalMatches || 1)) * 100) : 0;
+
+  const insightCards = [
+    {
+      key:'rising',
+      icon:<TrendingUp size={18}/>,
+      label:'Rising player',
+      value:insights.risingPlayer?.full_name || 'Not enough data',
+      meta:insights.risingPlayer ? '+'+Number(insights.risingPlayer.points_gain_90d || 0).toLocaleString()+' pts in the last 90 days' : 'Add tournament points to build this insight.',
+      detail:insights.risingPlayer ? [insights.risingPlayer.category_code,insights.risingPlayer.club || 'Independent'].filter(Boolean).join(' · ') : ''
+    },
+    {
+      key:'form',
+      icon:<Activity size={18}/>,
+      label:'In-form player',
+      value:insights.inFormPlayer?.full_name || 'Not enough match data',
+      meta:insights.inFormPlayer ? insights.inFormPlayer.win_rate+'% win rate · '+insights.inFormPlayer.recent_wins+'/'+insights.inFormPlayer.recent_matches+' recent matches' : 'At least two completed matches are needed.',
+      detail:insights.inFormPlayer ? [insights.inFormPlayer.category_code,insights.inFormPlayer.club || 'Independent'].filter(Boolean).join(' · ') : ''
+    },
+    {
+      key:'youngest',
+      icon:<UserRound size={18}/>,
+      label:'Youngest player group',
+      value:insights.youngestPlayer?.full_name || 'Age group unavailable',
+      meta:insights.youngestPlayer?.age_basis || 'Add age-group information to player records.',
+      detail:insights.youngestPlayer ? [insights.youngestPlayer.category_code,insights.youngestPlayer.club || 'Independent'].filter(Boolean).join(' · ') : ''
+    },
+    {
+      key:'active',
+      icon:<BarChart3 size={18}/>,
+      label:'Most active player',
+      value:insights.mostActivePlayer?.full_name || 'No tournament history yet',
+      meta:insights.mostActivePlayer ? Number(insights.mostActivePlayer.tournaments_played || 0)+' tournaments recorded' : 'Tournament participation will appear here.',
+      detail:insights.mostActivePlayer ? [insights.mostActivePlayer.category_code,Number(insights.mostActivePlayer.total_points || 0).toLocaleString()+' pts'].filter(Boolean).join(' · ') : ''
+    }
+  ];
+
+  const pulseCards = [
+    {label:'Live tournaments',value:Number(pulse.liveTournaments || 0),meta:Number(pulse.totalTournaments || 0)+' tournament records'},
+    {label:'Tournament events',value:Number(pulse.events || 0),meta:'MS, WS, MD, WD and XD draws'},
+    {label:'Matches complete',value:completionRate+'%',meta:Number(pulse.completedMatches || 0)+' of '+Number(pulse.totalMatches || 0)+' matches'},
+    {label:'Matches live now',value:Number(pulse.liveMatches || 0),meta:Number(pulse.completedTournaments || 0)+' tournaments completed'}
+  ];
+
   return <section className="overview-page">
     <section className="welcome-card"><div><span className="eyebrow">LESOTHO BADMINTON ASSOCIATION</span><h2>Committee dashboard</h2><p>Manage the player register, rankings and live tournament operations from one professional workspace.</p><div className="quick-actions"><button className="button" onClick={() => setActiveTab('records')}><Users size={16}/> Player register</button><button className="button secondary" onClick={() => setActiveTab('tournaments')}><Trophy size={16}/> Tournament centre</button><button className="button secondary" onClick={() => exportFile('/players/export.xlsx','lba_players.xlsx')}><FileText size={16}/> Export players</button></div></div><div className="court-badge"><span>🏸</span><b>PLAY</b><b>RANK</b><b>GROW</b></div></section>
-    <section className="stats"><Stat label="Registered players" value={dashboard?.totalPlayers ?? 0}/><Stat label="Active players" value={dashboard?.activePlayers ?? 0}/><Stat label="Categories" value={dashboard?.categories ?? 0}/><Stat label="Saved draws" value={dashboard?.draws ?? 0}/></section>
-    <section className="dashboard-grid"><div className="panel"><div className="section-head"><div><span className="eyebrow">RANKING SNAPSHOT</span><h3>Leading players</h3></div><button className="text-btn" onClick={() => setActiveTab('records')}>View register</button></div><div className="ranking-list">{top.map((p,i)=><div className="rank-row" key={p.id}><strong className={`rank-no rank-${i+1}`}>{i+1}</strong><div className="avatar">{p.full_name.split(' ').map(x=>x[0]).slice(0,2).join('')}</div><div className="rank-name"><b>{p.full_name}</b><small>{p.category_code} · {p.club || 'Independent'}</small></div><strong>{p.total_points}<small>points</small></strong></div>)}{!top.length&&<div className="empty">No ranking records yet.</div>}</div></div>
-      <div className="panel"><div className="section-head"><div><span className="eyebrow">PARTICIPATION</span><h3>Categories</h3></div></div><div className="category-list">{categories.map(c=><div className="category-row" key={c.category_code}><div><b>{c.category_code}</b><small>{c.event_type} · {c.age_group}</small></div><strong>{c.player_count}</strong></div>)}</div>{!categories.length&&<div className="empty">Import player records to see category activity.</div>}</div></section>
-    <section className="panel feature-strip"><div><Trophy size={20}/><div><b>Tournament operations</b><span>{draws.length ? `${draws.length} draw record(s) are available. Use Tournament Centre for live results, progression and reporting.` : 'Create a tournament when attendance is confirmed, then run each event from Round 1 to the Final.'}</span></div></div><button className="button" onClick={() => setActiveTab('tournaments')}>Open Tournament Centre</button></section>
+
+    <section className="stats overview-stats"><Stat label="Registered players" value={dashboard?.totalPlayers ?? 0}/><Stat label="Active players" value={dashboard?.activePlayers ?? 0}/><Stat label="Categories" value={dashboard?.categories ?? 0}/><Stat label="Saved draws" value={dashboard?.draws ?? 0}/></section>
+
+    <section className="panel smart-insights">
+      <div className="smart-insights-head">
+        <div><span className="eyebrow">SMART ANALYTICS</span><h3>Association insights</h3><p>Built from the player register, ranking updates and completed tournament matches.</p></div>
+        <div className="insight-tabs">
+          <button type="button" className={insightTab==='players'?'active':''} onClick={()=>setInsightTab('players')}>Player form</button>
+          <button type="button" className={insightTab==='tournaments'?'active':''} onClick={()=>setInsightTab('tournaments')}>Tournament pulse</button>
+        </div>
+      </div>
+
+      {insightTab==='players' ? <>
+        <div className="insight-grid">
+          {insightCards.map(card=><div className="insight-card" key={card.key}>
+            <div className="insight-icon">{card.icon}</div>
+            <div className="insight-copy"><small>{card.label}</small><b>{card.value}</b><span>{card.meta}</span>{card.detail&&<em>{card.detail}</em>}</div>
+          </div>)}
+        </div>
+        <p className="analytics-note">“Rising player” uses positive points added in the last 90 days. “In-form player” uses recent completed match results. The youngest insight is age-group based because exact dates of birth are not stored.</p>
+      </> : <div className="pulse-grid">
+        {pulseCards.map(card=><div className="pulse-card" key={card.label}><small>{card.label}</small><strong>{card.value}</strong><span>{card.meta}</span></div>)}
+      </div>}
+    </section>
+
+    <section className="dashboard-grid">
+      <div className="panel">
+        <div className="section-head"><div><span className="eyebrow">RANKING SNAPSHOT</span><h3>Leading players</h3></div><button className="text-btn" onClick={() => setActiveTab('records')}>View register</button></div>
+        <div className="ranking-list">{top.map((p,i)=><div className="rank-row" key={p.id}><strong className={'rank-no rank-'+(i+1)}>{i+1}</strong><div className="avatar">{p.full_name.split(' ').map(x=>x[0]).slice(0,2).join('')}</div><div className="rank-name"><b>{p.full_name}</b><small>{p.category_code} · {p.club || 'Independent'}</small></div><strong>{Number(p.total_points || 0).toLocaleString()}<small>points</small></strong></div>)}{!top.length&&<div className="empty">No ranking records yet.</div>}</div>
+      </div>
+
+      <div className="panel">
+        <div className="section-head"><div><span className="eyebrow">PARTICIPATION</span><h3>Categories</h3></div></div>
+        <div className="category-list">{categories.map(c=><div className="category-row" key={[c.category_code,c.event_type,c.age_group].join('-')}><div><b>{c.category_code}</b><small>{[c.event_type,c.age_group].filter(Boolean).join(' · ')}</small></div><strong>{c.player_count}</strong></div>)}</div>
+        {!categories.length&&<div className="empty">Import player records to see category activity.</div>}
+      </div>
+    </section>
+
+    <section className="panel feature-strip"><div><Trophy size={20}/><div><b>Tournament operations</b><span>{draws.length ? draws.length+' draw record(s) are available. Use Tournament Centre for live results, progression and reporting.' : 'Create a tournament when attendance is confirmed, then run each event from Round 1 to the Final.'}</span></div></div><button className="button" onClick={() => setActiveTab('tournaments')}>Open Tournament Centre</button></section>
   </section>;
 }
 
