@@ -678,6 +678,40 @@ function Draws({ draws, drawForm, setDrawForm, generateDraw, categoryOptions, dr
   const [selected, setSelected] = useState(null);
   const selectedSet = new Set(drawForm.player_ids || []);
   const allVisibleIds = drawCandidates.map(player => player.id);
+  function updateDoublesPair(index, field, value) {
+    setDoublesPairs(current => current.map((pair,i)=>i===index ? {...pair,[field]:value} : pair));
+  }
+
+  function addDoublesPair() {
+    setDoublesPairs(current => [...current,{a:'',b:''}]);
+  }
+
+  function removeDoublesPair(index) {
+    setDoublesPairs(current => {
+      const next=current.filter((_,i)=>i!==index);
+      return next.length ? next : [{a:'',b:''}];
+    });
+  }
+
+  function clearDoublesPairs() {
+    setDoublesPairs([{a:'',b:''}]);
+  }
+
+  function useSavedDoublesTeam(team) {
+    const a=String(team.player_a_id);
+    const b=String(team.player_b_id);
+    setDoublesPairs(current => {
+      const already=current.some(p => [p.a,p.b].includes(a) || [p.a,p.b].includes(b));
+      if (already) {
+        setMessage('One of those partners is already assigned to another team in this draw.');
+        return current;
+      }
+      const emptyIndex=current.findIndex(p=>!p.a&&!p.b);
+      if (emptyIndex>=0) return current.map((p,i)=>i===emptyIndex?{a,b}:p);
+      return [...current,{a,b}];
+    });
+  }
+
   function togglePlayer(id) {
     setDrawForm(current => {
       const ids = new Set(current.player_ids || []);
@@ -767,6 +801,9 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const [games, setGames] = useState([{a:'',b:''},{a:'',b:''},{a:'',b:''}]);
   const [busy, setBusy] = useState(false);
   const [historyDetails, setHistoryDetails] = useState({});
+  const [doublesPairs, setDoublesPairs] = useState([{a:'',b:''}]);
+  const [savedDoublesTeams, setSavedDoublesTeams] = useState([]);
+  const [loadingDoublesTeams, setLoadingDoublesTeams] = useState(false);
   const [bracketZoom, setBracketZoom] = useState(1);
   const [showCreate, setShowCreate] = useState(tournaments.length === 0);
   const [splitPct, setSplitPct] = useState(() => {
@@ -788,6 +825,22 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
 
   useEffect(() => { if (!selectedId && tournaments.length) setSelectedId(tournaments[0].id); }, [tournaments, selectedId]);
   useEffect(() => { if (selectedId) load(selectedId); }, [selectedId]);
+  useEffect(() => {
+    if (!['MD','WD','XD'].includes(selectedEvent)) {
+      setSavedDoublesTeams([]);
+      setDoublesPairs([{a:'',b:''}]);
+      return;
+    }
+    let cancelled=false;
+    setDoublesPairs([{a:'',b:''}]);
+    setLoadingDoublesTeams(true);
+    api('/doubles/teams?event='+encodeURIComponent(selectedEvent))
+      .then(rows=>{ if(!cancelled) setSavedDoublesTeams(Array.isArray(rows)?rows:[]); })
+      .catch(()=>{ if(!cancelled) setSavedDoublesTeams([]); })
+      .finally(()=>{ if(!cancelled) setLoadingDoublesTeams(false); });
+    return ()=>{cancelled=true;};
+  }, [selectedEvent, draw.category_code]);
+
   useEffect(() => {
     // Keep the user's selected event even when that event has no draw yet.
     // This is what allows a tournament with MS already created to add WS,
@@ -833,6 +886,18 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       return true;
     });
   }, [players, draw.category_code, draw.event_name, selectedEvent]);
+
+  const isDoublesEvent = ['MD','WD','XD'].includes(selectedEvent);
+  const genderBucket = p => {
+    const gender=String(p?.gender || '').trim().toLowerCase();
+    const eventType=String(p?.event_type || '').trim().toLowerCase();
+    if (['men','male','boys','boy'].includes(gender) || eventType.includes("men's") || eventType.includes('boys')) return 'M';
+    if (['women','female','girls','girl'].includes(gender) || eventType.includes("women's") || eventType.includes('girls')) return 'W';
+    return 'O';
+  };
+  const doublesPartnerA = useMemo(() => selectedEvent==='XD' ? candidates.filter(p=>genderBucket(p)==='M') : candidates, [candidates, selectedEvent]);
+  const doublesPartnerB = useMemo(() => selectedEvent==='XD' ? candidates.filter(p=>genderBucket(p)==='W') : candidates, [candidates, selectedEvent]);
+  const completeDoublesPairs = useMemo(() => doublesPairs.filter(p=>p.a && p.b), [doublesPairs]);
 
   const eventOptions = ['MS','WS','MD','WD','XD'];
   const eventDraws = useMemo(() => (detail?.draws || []).filter(d => (d.event_name || 'MS').toUpperCase() === selectedEvent), [detail, selectedEvent]);
@@ -1004,7 +1069,17 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
 
   async function generateTournamentDraw(e) {
     e.preventDefault();
-    if (!selectedId || draw.player_ids.length < 2) { setMessage('Select at least two attending players first.'); return; }
+    if (!selectedId) return;
+    if (isDoublesEvent) {
+      const incomplete=doublesPairs.some(p => (p.a && !p.b) || (!p.a && p.b));
+      if (incomplete) { setMessage('Complete both partners for every doubles team, or remove the unfinished team.'); return; }
+      if (completeDoublesPairs.length < 2) { setMessage('A doubles knockout draw needs at least two complete teams.'); return; }
+      const ids=completeDoublesPairs.flatMap(p=>[Number(p.a),Number(p.b)]);
+      if (new Set(ids).size !== ids.length) { setMessage('Each player can belong to only one team in this doubles draw.'); return; }
+    } else if (draw.player_ids.length < 2) {
+      setMessage('Select at least two attending players first.');
+      return;
+    }
     if (eventHasDraw) { setMessage(selectedEvent+' already has a draw in this tournament. Select another event to create another draw.'); return; }
     setBusy(true);
     try {
@@ -1013,15 +1088,17 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
         body:JSON.stringify({
           title: draw.title,
           category_code: draw.category_code,
-          draw_type: ['MD','WD','XD'].includes(selectedEvent) ? 'Doubles' : 'Singles',
+          draw_type: isDoublesEvent ? 'Doubles' : 'Singles',
           event_name: selectedEvent,
           seed_by_rank: draw.seed_by_rank,
-          player_ids: draw.player_ids
+          player_ids: isDoublesEvent ? completeDoublesPairs.flatMap(p=>[Number(p.a),Number(p.b)]) : draw.player_ids,
+          pairs: isDoublesEvent ? completeDoublesPairs.map(p=>({player_a_id:Number(p.a),player_b_id:Number(p.b)})) : [],
+          save_pairs: true
         })
       });
       await load(selectedId);
       await refresh();
-      setMessage('Round 1 draw generated. Winners will advance automatically after results are entered.');
+      setMessage(isDoublesEvent ? selectedEvent+' teams saved and Round 1 generated. Winners will advance as complete pairs.' : 'Round 1 draw generated. Winners will advance automatically after results are entered.');
     } catch (e) { setMessage(e.message); }
     finally { setBusy(false); }
   }
@@ -1279,7 +1356,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             {eventOptions.map(event => {
               const info=eventProgress[event] || {exists:false,total:0,completed:0,live:0};
               const status=!info.exists ? 'Add draw' : (info.total && info.completed===info.total ? 'Complete' : (info.live ? info.completed+'/'+info.total+' · LIVE' : info.completed+'/'+info.total+' done'));
-              return <button key={event} type="button" className={selectedEvent===event ? 'event-tab active' : 'event-tab'} onClick={()=>{setSelectedEvent(event);setDraw(d=>({...d,event_name:event,draw_type:['MD','WD','XD'].includes(event)?'Doubles':'Singles',player_ids:[],title:detail.name+' — '+event}));}}>
+              return <button key={event} type="button" className={selectedEvent===event ? 'event-tab active' : 'event-tab'} onClick={()=>{setSelectedEvent(event);setDoublesPairs([{a:'',b:''}]);setDraw(d=>({...d,event_name:event,draw_type:['MD','WD','XD'].includes(event)?'Doubles':'Singles',player_ids:[],title:detail.name+' — '+event}));}}>
                 <b>{event}</b><span>{status}</span>
               </button>;
             })}
@@ -1292,21 +1369,67 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           <form className="form" onSubmit={generateTournamentDraw}>
             <div className="tournament-setup-grid">
               <Input label="Draw title" value={draw.title} onChange={v=>setDraw({...draw,title:v})}/>
-              <label><span>Event</span><select value={selectedEvent} onChange={e=>{const event=e.target.value;setSelectedEvent(event);setDraw({...draw,event_name:event,draw_type:['MD','WD','XD'].includes(event)?'Doubles':'Singles',player_ids:[],title:detail.name+' — '+event});}}>
+              <label><span>Event</span><select value={selectedEvent} onChange={e=>{const event=e.target.value;setSelectedEvent(event);setDoublesPairs([{a:'',b:''}]);setDraw({...draw,event_name:event,draw_type:['MD','WD','XD'].includes(event)?'Doubles':'Singles',player_ids:[],title:detail.name+' — '+event});}}>
                 <option value="MS">MS — Boys Singles</option>
                 <option value="WS">WS — Girls Singles</option>
                 <option value="MD">MD — Boys Doubles</option>
                 <option value="WD">WD — Girls Doubles</option>
                 <option value="XD">XD — Mixed Doubles</option>
               </select></label>
-              <label><span>Category / Age</span><select value={draw.category_code} onChange={e=>setDraw({...draw,category_code:e.target.value,player_ids:[]})}>{categoryOptions.map(c=><option key={c}>{c}</option>)}</select></label>
+              <label><span>Category / Age</span><select value={draw.category_code} onChange={e=>{setDoublesPairs([{a:'',b:''}]);setDraw({...draw,category_code:e.target.value,player_ids:[]});}}>{categoryOptions.map(c=><option key={c}>{c}</option>)}</select></label>
               <label className="check setup-seed"><input type="checkbox" checked={draw.seed_by_rank} onChange={e=>setDraw({...draw,seed_by_rank:e.target.checked})}/> Seed the first round by ranking</label>
             </div>
-            <div className="participant-head"><b>Attending players</b><span>{draw.player_ids.length} selected</span></div>
-            {['MD','WD','XD'].includes(selectedEvent) && <p className="helper">Doubles: select partners consecutively. Players 1+2 form Team 1, players 3+4 form Team 2, and so on. Select an even number of players.</p>}
-            <div className="participant-actions"><button type="button" className="mini" onClick={()=>setDraw(x=>({...x,player_ids:candidates.map(p=>p.id)}))}>Select all shown</button><button type="button" className="mini" onClick={()=>setDraw(x=>({...x,player_ids:[]}))}>Clear</button></div>
-            <div className="participant-list">{candidates.map(p=><label className="participant" key={p.id}><input type="checkbox" checked={draw.player_ids.includes(p.id)} onChange={()=>togglePlayer(p.id)}/><span><b>{p.full_name}</b><small>{p.category_code} · {p.gender} · {p.event_type || '—'} · Rank #{p.rank_position || '-'} · {p.total_points} pts</small></span></label>)}{!candidates.length&&<div className="empty small">No active players found in this category.</div>}</div>
-            <button className="button" disabled={busy}><Shuffle size={16}/> Generate Round 1 Draw</button>
+            {!isDoublesEvent ? <>
+              <div className="participant-head"><b>Attending players</b><span>{draw.player_ids.length} selected</span></div>
+              <div className="participant-actions"><button type="button" className="mini" onClick={()=>setDraw(x=>({...x,player_ids:candidates.map(p=>p.id)}))}>Select all shown</button><button type="button" className="mini" onClick={()=>setDraw(x=>({...x,player_ids:[]}))}>Clear</button></div>
+              <div className="participant-list">{candidates.map(p=><label className="participant" key={p.id}><input type="checkbox" checked={draw.player_ids.includes(p.id)} onChange={()=>togglePlayer(p.id)}/><span><b>{p.full_name}</b><small>{p.category_code} · {p.gender} · {p.event_type || '—'} · Rank #{p.rank_position || '-'} · {p.total_points} pts</small></span></label>)}{!candidates.length&&<div className="empty small">No active players found in this category.</div>}</div>
+            </> : <div className="doubles-builder">
+              <div className="participant-head">
+                <div><b>{selectedEvent} Teams</b><small>Pair partners explicitly before generating the draw.</small></div>
+                <span>{completeDoublesPairs.length} complete team{completeDoublesPairs.length===1?'':'s'}</span>
+              </div>
+              <div className="doubles-rule">
+                <Users size={17}/>
+                <span>{selectedEvent==='XD' ? 'Mixed Doubles requires one male/boys partner and one female/girls partner.' : selectedEvent==='MD' ? 'Men’s Doubles requires two male/boys partners per team.' : 'Women’s Doubles requires two female/girls partners per team.'} Teams are automatically saved to Doubles Records for future tournaments.</span>
+              </div>
+
+              <div className="doubles-pair-list">
+                {doublesPairs.map((pair,index)=>{
+                  const usedElsewhere=new Set(doublesPairs.flatMap((p,i)=>i===index?[]:[String(p.a||''),String(p.b||'')]).filter(Boolean));
+                  return <div className="doubles-pair-card" key={'pair-'+index}>
+                    <div className="doubles-pair-head"><strong>Team {index+1}</strong><button type="button" className="mini danger" onClick={()=>removeDoublesPair(index)} disabled={doublesPairs.length===1}>Remove</button></div>
+                    <div className="doubles-partner-grid">
+                      <label><span>{selectedEvent==='XD'?'Male / Boys partner':'Partner 1'}</span><select value={pair.a} onChange={e=>updateDoublesPair(index,'a',e.target.value)}>
+                        <option value="">Select player</option>
+                        {doublesPartnerA.map(p=><option key={p.id} value={p.id} disabled={usedElsewhere.has(String(p.id)) || String(pair.b)===String(p.id)}>{p.full_name} · {p.club || 'Independent'}</option>)}
+                      </select></label>
+                      <div className="pair-link"><span>+</span></div>
+                      <label><span>{selectedEvent==='XD'?'Female / Girls partner':'Partner 2'}</span><select value={pair.b} onChange={e=>updateDoublesPair(index,'b',e.target.value)}>
+                        <option value="">Select player</option>
+                        {doublesPartnerB.map(p=><option key={p.id} value={p.id} disabled={usedElsewhere.has(String(p.id)) || String(pair.a)===String(p.id)}>{p.full_name} · {p.club || 'Independent'}</option>)}
+                      </select></label>
+                    </div>
+                    {pair.a && pair.b && <div className="paired-team-preview"><CheckCircle2 size={14}/><b>{players.find(p=>String(p.id)===String(pair.a))?.full_name}</b><span>&</span><b>{players.find(p=>String(p.id)===String(pair.b))?.full_name}</b></div>}
+                  </div>;
+                })}
+              </div>
+              <div className="participant-actions">
+                <button type="button" className="mini green" onClick={addDoublesPair}><Plus size={14}/> Add Team</button>
+                <button type="button" className="mini" onClick={clearDoublesPairs}>Clear Teams</button>
+              </div>
+
+              <div className="doubles-records">
+                <div className="doubles-records-head"><div><span className="eyebrow">DOUBLES RECORDS</span><b>Saved {selectedEvent} partnerships</b></div><small>{loadingDoublesTeams?'Loading…':savedDoublesTeams.length+' saved'}</small></div>
+                <div className="doubles-record-grid">
+                  {savedDoublesTeams.map(team=><div className="doubles-record-card" key={team.id}>
+                    <div><b>{team.team_name}</b><small>{team.matches_played || 0} matches · {team.wins || 0}W–{team.losses || 0}L · {Number(team.win_rate || 0)}%</small></div>
+                    <button type="button" className="mini" onClick={()=>useSavedDoublesTeam(team)}>Use Team</button>
+                  </div>)}
+                  {!loadingDoublesTeams && !savedDoublesTeams.length && <div className="empty small">No saved {selectedEvent} partnerships yet. Teams created here will be saved automatically.</div>}
+                </div>
+              </div>
+            </div>}
+            <button className="button" disabled={busy}><Shuffle size={16}/> Generate {isDoublesEvent ? selectedEvent+' Team Draw' : 'Round 1 Draw'}</button>
           </form>
         </div> : <div className="panel round-workspace">
           <div className="round-action-bar">
