@@ -56,8 +56,7 @@ jobs:
               manifest.write_text(text)
           PY
           cp src/assets/lesbad-mobile-icon.webp android/app/src/main/res/drawable/lesbad_mobile_icon.webp
-          sed -i 's#@drawable/lba_launcher#@drawable/lesbad_mobile_icon#g' android/app/src/main/AndroidManifest.xml
-          sed -i 's#@mipmap/ic_launcher_round#@drawable/lba_launcher#g; s#@mipmap/ic_launcher#@drawable/lba_launcher#g' android/app/src/main/AndroidManifest.xml
+          sed -i 's#@mipmap/ic_launcher_round#@drawable/lesbad_mobile_icon#g; s#@mipmap/ic_launcher#@drawable/lesbad_mobile_icon#g' android/app/src/main/AndroidManifest.xml
 
       - name: Sync Capacitor
         run: npx cap sync android
