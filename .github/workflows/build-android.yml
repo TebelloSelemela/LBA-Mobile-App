@@ -55,7 +55,8 @@ jobs:
               text = "\n".join(lines) + "\n"
               manifest.write_text(text)
           PY
-          base64 -d src/assets/lba-launcher-icon.b64 > android/app/src/main/res/drawable/lba_launcher.webp
+          cp src/assets/lesbad-mobile-icon.webp android/app/src/main/res/drawable/lesbad_mobile_icon.webp
+          sed -i 's#@drawable/lba_launcher#@drawable/lesbad_mobile_icon#g' android/app/src/main/AndroidManifest.xml
           sed -i 's#@mipmap/ic_launcher_round#@drawable/lba_launcher#g; s#@mipmap/ic_launcher#@drawable/lba_launcher#g' android/app/src/main/AndroidManifest.xml
 
       - name: Sync Capacitor
