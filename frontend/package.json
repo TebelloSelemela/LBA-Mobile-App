@@ -47,7 +47,7 @@
     "artifactName": "LBA-Tournament-Desktop-${version}-${arch}.exe"
   },
   "name": "lba-tournament-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "LESBAD tournament, ranking and mobile administration system",
   "author": "Lesotho Badminton Association",
   "main": "electron/main.cjs"

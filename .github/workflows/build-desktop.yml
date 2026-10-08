@@ -32,7 +32,7 @@ jobs:
           @'
           from pathlib import Path
           from PIL import Image
-          source=Path("src/assets/lesbad-icon-clean.jpg")
+          source=Path("src/assets/lesbad-app-icon.jpg")
           target=Path("electron")
           target.mkdir(exist_ok=True)
           image=Image.open(source).convert("RGBA")
