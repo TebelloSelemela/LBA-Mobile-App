@@ -536,7 +536,8 @@ def create_app():
                 args.append(event)
             rows=con.execute(f"""SELECT dt.*,pa.full_name AS player_a_name,pb.full_name AS player_b_name,
                                        pa.gender AS player_a_gender,pb.gender AS player_b_gender,
-                                       pa.category_code AS player_a_category,pb.category_code AS player_b_category
+                                       pa.category_code AS player_a_category,pb.category_code AS player_b_category,
+                                       pa.age_group AS player_a_age_group,pb.age_group AS player_b_age_group
                                 FROM doubles_teams dt
                                 JOIN players pa ON pa.id=dt.player_a_id
                                 JOIN players pb ON pb.id=dt.player_b_id
@@ -590,6 +591,7 @@ def create_app():
     def create_doubles_team():
         data=request.get_json(silent=True) or {}
         event=(data.get("event_name") or "").strip().upper()
+        requested_age=(data.get("age_group") or "All").strip()
         a_id=nullable_int(data.get("player_a_id")); b_id=nullable_int(data.get("player_b_id"))
         if event not in {"MD","WD","XD"}:
             return jsonify({"error":"Doubles team event must be MD, WD or XD."}),400
@@ -602,6 +604,8 @@ def create_app():
             a=dict(a); bb=dict(bb)
             error=_validate_doubles_pair(event,a,bb)
             if error:return jsonify({"error":error}),400
+            if requested_age != "All" and (not _player_matches_draw_category(a,requested_age) or not _player_matches_draw_category(bb,requested_age)):
+                return jsonify({"error":f"Both partners must belong to the selected {requested_age} age category."}),400
             pa,pb=(a,bb) if int(a["id"])<int(bb["id"]) else (bb,a)
             team_name=(data.get("team_name") or f"{a['full_name']} / {bb['full_name']}").strip()
             now=now_iso()
@@ -611,11 +615,69 @@ def create_app():
                            DO UPDATE SET team_name=excluded.team_name,status='Active',updated_at=excluded.updated_at""",
                         (event,pa["id"],pb["id"],team_name,"Active",g.current_user["username"],now,now))
             con.commit()
-            row=con.execute("""SELECT dt.*,pa.full_name AS player_a_name,pb.full_name AS player_b_name
+            row=con.execute("""SELECT dt.*,pa.full_name AS player_a_name,pb.full_name AS player_b_name,
+                                      pa.gender AS player_a_gender,pb.gender AS player_b_gender,
+                                      pa.age_group AS player_a_age_group,pb.age_group AS player_b_age_group
                                FROM doubles_teams dt JOIN players pa ON pa.id=dt.player_a_id JOIN players pb ON pb.id=dt.player_b_id
                                WHERE dt.event_name=? AND dt.player_a_id=? AND dt.player_b_id=?""",
                             (event,pa["id"],pb["id"])).fetchone()
         return jsonify(dict(row)),201
+
+    @app.route("/api/doubles/teams/<int:team_id>", methods=["PUT"])
+    @require_auth
+    def update_doubles_team(team_id):
+        data=request.get_json(silent=True) or {}
+        with db() as con:
+            current=con.execute("SELECT * FROM doubles_teams WHERE id=?",(team_id,)).fetchone()
+            if not current:
+                return jsonify({"error":"Doubles team not found"}),404
+
+            event=(data.get("event_name") or current["event_name"] or "").strip().upper()
+            requested_age=(data.get("age_group") or "All").strip()
+            a_id=nullable_int(data.get("player_a_id")) or int(current["player_a_id"])
+            b_id=nullable_int(data.get("player_b_id")) or int(current["player_b_id"])
+            if event not in {"MD","WD","XD"}:
+                return jsonify({"error":"Doubles team event must be MD, WD or XD."}),400
+            if a_id==b_id:
+                return jsonify({"error":"A player cannot be paired with themselves."}),400
+
+            a=con.execute("SELECT * FROM players WHERE id=? AND status='Active'",(a_id,)).fetchone()
+            bb=con.execute("SELECT * FROM players WHERE id=? AND status='Active'",(b_id,)).fetchone()
+            if not a or not bb:
+                return jsonify({"error":"Both partners must be active players."}),400
+            a=dict(a); bb=dict(bb)
+            error=_validate_doubles_pair(event,a,bb)
+            if error:
+                return jsonify({"error":error}),400
+            if requested_age != "All" and (not _player_matches_draw_category(a,requested_age) or not _player_matches_draw_category(bb,requested_age)):
+                return jsonify({"error":f"Both partners must belong to the selected {requested_age} age category."}),400
+
+            pa,pb=(a,bb) if int(a["id"])<int(bb["id"]) else (bb,a)
+            conflict=con.execute("""SELECT id FROM doubles_teams
+                                    WHERE event_name=? AND player_a_id=? AND player_b_id=? AND id!=?""",
+                                 (event,pa["id"],pb["id"],team_id)).fetchone()
+            if conflict:
+                return jsonify({"error":"That partnership already exists in this doubles event."}),409
+
+            team_name=(data.get("team_name") or f"{a['full_name']} / {bb['full_name']}").strip()
+            now=now_iso()
+            con.execute("""UPDATE doubles_teams
+                           SET event_name=?,player_a_id=?,player_b_id=?,team_name=?,status='Active',updated_at=?
+                           WHERE id=?""",
+                        (event,pa["id"],pb["id"],team_name,now,team_id))
+            con.execute("""INSERT INTO audit_logs(actor,action,entity,entity_id,details,created_at)
+                           VALUES(?,?,?,?,?,?)""",
+                        (g.current_user["username"],"UPDATE_DOUBLES_TEAM","doubles_teams",team_id,
+                         f"{event}: {team_name}",now))
+            con.commit()
+            row=con.execute("""SELECT dt.*,pa.full_name AS player_a_name,pb.full_name AS player_b_name,
+                                      pa.gender AS player_a_gender,pb.gender AS player_b_gender,
+                                      pa.age_group AS player_a_age_group,pb.age_group AS player_b_age_group
+                               FROM doubles_teams dt
+                               JOIN players pa ON pa.id=dt.player_a_id
+                               JOIN players pb ON pb.id=dt.player_b_id
+                               WHERE dt.id=?""",(team_id,)).fetchone()
+        return jsonify(dict(row))
 
     @app.route("/api/doubles/teams/<int:team_id>/points", methods=["POST"])
     @require_auth
@@ -657,9 +719,15 @@ def create_app():
         with db() as con:
             team=con.execute("SELECT * FROM doubles_teams WHERE id=?",(team_id,)).fetchone()
             if not team:return jsonify({"error":"Doubles team not found"}),404
+            # Soft-delete the saved partnership so historical tournament matches
+            # remain untouched while it disappears from active Doubles Team Records.
             con.execute("UPDATE doubles_teams SET status='Archived',updated_at=? WHERE id=?",(now,team_id))
+            con.execute("""INSERT INTO audit_logs(actor,action,entity,entity_id,details,created_at)
+                           VALUES(?,?,?,?,?,?)""",
+                        (g.current_user["username"],"DELETE_DOUBLES_TEAM","doubles_teams",team_id,
+                         f"{team['event_name']}: {team['team_name']}",now))
             con.commit()
-        return jsonify({"archived":True,"id":team_id})
+        return jsonify({"deleted":True,"id":team_id})
 
     @app.route("/api/categories")
     @require_auth
@@ -986,6 +1054,8 @@ def create_app():
                     error=_validate_doubles_pair(event_name,a,bb)
                     if error:
                         return jsonify({"error":f"Team {index}: {error}"}),400
+                    if category and category!="All" and (not _player_matches_draw_category(a,category) or not _player_matches_draw_category(bb,category)):
+                        return jsonify({"error":f"Team {index}: both partners must belong to the selected {category} age/category."}),400
                     used.update([a_id,b_id])
                     pa,pb=(a,bb) if int(a["id"])<int(bb["id"]) else (bb,a)
                     team_name=f"{a['full_name']} / {bb['full_name']}"
@@ -2171,6 +2241,20 @@ def _validate_doubles_pair(event_name, player_a, player_b):
     if event=="XD" and set([ga,gb]) != {"M","W"}:
         return "XD requires one male/boys player and one female/girls player."
     return None
+
+
+def _player_matches_draw_category(player, selected_category):
+    selected=str(selected_category or "").strip().upper()
+    if not selected or selected=="ALL":
+        return True
+    category=str(player.get("category_code") or "").strip().upper()
+    age=str(player.get("age_group") or "").strip().upper()
+    if selected==category or selected==age:
+        return True
+    # Accept a full singles category (e.g. WS,U15) and an age-only doubles
+    # selection (e.g. U15) as the same age band when appropriate.
+    selected_age=infer_age_group(selected).upper()
+    return selected_age!="OPEN" and selected_age==age
 
 
 def build_fixtures(players, draw_type, doubles_pairs=None):

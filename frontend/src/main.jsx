@@ -83,6 +83,48 @@ function applyPlayerClassification(current, changes={}) {
   return {...next,age,age_group,category_code};
 }
 
+function doublesGenderBucket(player) {
+  const gender=String(player?.gender || '').trim().toLowerCase();
+  const eventType=String(player?.event_type || '').trim().toLowerCase();
+  if (['men','male','boys','boy'].includes(gender) || eventType.includes("men's") || eventType.includes('boys')) return 'M';
+  if (['women','female','girls','girl'].includes(gender) || eventType.includes("women's") || eventType.includes('girls')) return 'W';
+  return 'O';
+}
+
+function doublesAgeGroup(player) {
+  const saved=String(player?.age_group || '').trim().toUpperCase();
+  if (saved && saved !== 'OPEN') return saved;
+  const match=String(player?.category_code || '').toUpperCase().match(/U\d{1,2}|18\+/);
+  return match ? match[0] : (saved || 'Open');
+}
+
+function playerMatchesDoublesAge(player, selectedAge) {
+  return !selectedAge || selectedAge === 'All' || doublesAgeGroup(player) === String(selectedAge).toUpperCase();
+}
+
+function doublesAgeOptions(players, eventName) {
+  const event=String(eventName || '').toUpperCase();
+  const counts={};
+  (players || []).forEach(player=>{
+    if (player.status && player.status !== 'Active') return;
+    const bucket=doublesGenderBucket(player);
+    if (!['M','W'].includes(bucket)) return;
+    const age=doublesAgeGroup(player);
+    if (!age || age === 'Open') return;
+    if (!counts[age]) counts[age]={M:0,W:0};
+    counts[age][bucket]+=1;
+  });
+  const eligible=Object.keys(counts).filter(age=>{
+    if (event==='MD') return counts[age].M>=2;
+    if (event==='WD') return counts[age].W>=2;
+    if (event==='XD') return counts[age].M>=1 && counts[age].W>=1;
+    return true;
+  });
+  const order={'U11':11,'U13':13,'U15':15,'U17':17,'U19':19,'18+':30};
+  eligible.sort((a,b)=>(order[a]??90)-(order[b]??90) || a.localeCompare(b));
+  return ['All',...eligible];
+}
+
 function emptyForm() {
   return {
     full_name: '',
@@ -892,6 +934,9 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
   const [doublesTeams, setDoublesTeams] = useState([]);
   const [loadingDoubles, setLoadingDoubles] = useState(false);
   const [doublesPointInputs, setDoublesPointInputs] = useState({});
+  const [doublesPlayers, setDoublesPlayers] = useState([]);
+  const [showDoublesEditor, setShowDoublesEditor] = useState(false);
+  const [doublesTeamForm, setDoublesTeamForm] = useState({id:null,event_name:'MD',age_group:'All',player_a_id:'',player_b_id:'',team_name:''});
 
   async function loadDoublesTeams(event=doublesEvent) {
     setLoadingDoubles(true);
@@ -908,18 +953,81 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
   }
 
   useEffect(() => {
-    if (recordView === 'doubles') loadDoublesTeams(doublesEvent);
+    if (recordView === 'doubles') {
+      loadDoublesTeams(doublesEvent);
+      api('/players?category=All&status=Active')
+        .then(rows=>setDoublesPlayers(Array.isArray(rows)?rows:[]))
+        .catch(()=>setDoublesPlayers([]));
+    }
   }, [recordView, doublesEvent]);
+
+  function resetDoublesTeamEditor() {
+    setDoublesTeamForm({id:null,event_name:'MD',age_group:'All',player_a_id:'',player_b_id:'',team_name:''});
+    setShowDoublesEditor(false);
+  }
+
+  function startAddDoublesTeam() {
+    const event=['MD','WD','XD'].includes(doublesEvent) ? doublesEvent : 'MD';
+    setDoublesTeamForm({id:null,event_name:event,age_group:'All',player_a_id:'',player_b_id:'',team_name:''});
+    setShowDoublesEditor(true);
+  }
+
+  function editDoublesTeam(team) {
+    let aId=String(team.player_a_id || ''), bId=String(team.player_b_id || '');
+    if (team.event_name==='XD' && String(team.player_a_gender || '').toLowerCase().startsWith('w')) {
+      [aId,bId]=[bId,aId];
+    }
+    const ageA=String(team.player_a_age_group || '');
+    const ageB=String(team.player_b_age_group || '');
+    setDoublesTeamForm({
+      id:team.id,
+      event_name:team.event_name,
+      age_group:ageA && ageA===ageB ? ageA : 'All',
+      player_a_id:aId,
+      player_b_id:bId,
+      team_name:team.team_name || ''
+    });
+    setShowDoublesEditor(true);
+  }
+
+  async function saveDoublesTeam(e) {
+    e.preventDefault();
+    const f=doublesTeamForm;
+    if (!f.player_a_id || !f.player_b_id) {
+      if (setMessage) setMessage('Select both partners for the doubles team.');
+      return;
+    }
+    try {
+      const path=f.id ? '/doubles/teams/'+f.id : '/doubles/teams';
+      const method=f.id ? 'PUT' : 'POST';
+      const saved=await api(path,{
+        method,
+        body:JSON.stringify({
+          event_name:f.event_name,
+          age_group:f.age_group,
+          player_a_id:Number(f.player_a_id),
+          player_b_id:Number(f.player_b_id),
+          team_name:f.team_name
+        })
+      });
+      if (doublesEvent!=='All' && doublesEvent!==f.event_name) setDoublesEvent(f.event_name);
+      else await loadDoublesTeams(doublesEvent);
+      resetDoublesTeamEditor();
+      if (setMessage) setMessage((f.id?'Updated ':'Added ')+(saved.team_name || 'doubles team')+'.');
+    } catch (e) {
+      if (setMessage) setMessage(e.message || 'Could not save doubles team.');
+    }
+  }
 
   async function archiveDoublesTeam(team) {
     const label=team.team_name || [team.player_a_name,team.player_b_name].filter(Boolean).join(' / ');
-    if (!window.confirm('Archive '+label+'? The historical match results will remain intact.')) return;
+    if (!window.confirm('Delete '+label+' from active Doubles Team Records? Historical tournament matches and results will remain intact.')) return;
     try {
       await api('/doubles/teams/'+team.id,{method:'DELETE'});
       await loadDoublesTeams(doublesEvent);
-      if (setMessage) setMessage(label+' archived from active doubles teams.');
+      if (setMessage) setMessage(label+' deleted from active doubles team records.');
     } catch (e) {
-      if (setMessage) setMessage(e.message || 'Could not archive doubles team.');
+      if (setMessage) setMessage(e.message || 'Could not delete doubles team.');
     }
   }
 
@@ -942,6 +1050,27 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
       if (setMessage) setMessage(e.message || 'Could not add doubles points.');
     }
   }
+
+  const doublesEditorAgeOptions=useMemo(
+    ()=>doublesAgeOptions(doublesPlayers,doublesTeamForm.event_name),
+    [doublesPlayers,doublesTeamForm.event_name]
+  );
+  const doublesEditorCandidates=useMemo(
+    ()=>(doublesPlayers || []).filter(p=>p.status==='Active' && playerMatchesDoublesAge(p,doublesTeamForm.age_group)),
+    [doublesPlayers,doublesTeamForm.age_group]
+  );
+  const doublesEditorPartnerA=useMemo(()=>{
+    const event=doublesTeamForm.event_name;
+    if (event==='MD') return doublesEditorCandidates.filter(p=>doublesGenderBucket(p)==='M');
+    if (event==='WD') return doublesEditorCandidates.filter(p=>doublesGenderBucket(p)==='W');
+    return doublesEditorCandidates.filter(p=>doublesGenderBucket(p)==='M');
+  },[doublesEditorCandidates,doublesTeamForm.event_name]);
+  const doublesEditorPartnerB=useMemo(()=>{
+    const event=doublesTeamForm.event_name;
+    if (event==='MD') return doublesEditorCandidates.filter(p=>doublesGenderBucket(p)==='M');
+    if (event==='WD') return doublesEditorCandidates.filter(p=>doublesGenderBucket(p)==='W');
+    return doublesEditorCandidates.filter(p=>doublesGenderBucket(p)==='W');
+  },[doublesEditorCandidates,doublesTeamForm.event_name]);
 
   const doublesTotals=doublesTeams.reduce((acc,team)=>{
     acc.points+=Number(team.total_points || 0);
@@ -995,6 +1124,7 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
       <div className="section-head records-section-head">
         <div><span className="eyebrow">PARTNERSHIP RANKINGS</span><h3>Doubles Team Records</h3><p>MD, WD and XD are ranked independently by doubles points. These points are separate from each player’s singles ranking points.</p></div>
         <div className="records-filter-actions">
+          <button type="button" className="button" onClick={startAddDoublesTeam}><Plus size={15}/> Add Team</button>
           <select value={doublesEvent} onChange={e=>setDoublesEvent(e.target.value)}>
             <option value="All">All doubles events</option>
             <option value="MD">MD — Boys/Men Doubles</option>
@@ -1004,6 +1134,36 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
           <button type="button" className="button secondary" onClick={()=>loadDoublesTeams(doublesEvent)} disabled={loadingDoubles}><RefreshCw size={15}/> {loadingDoubles?'Refreshing…':'Refresh'}</button>
         </div>
       </div>
+
+      {showDoublesEditor && <form className="doubles-team-editor form" onSubmit={saveDoublesTeam}>
+        <div className="doubles-team-editor-head">
+          <div><span className="eyebrow">{doublesTeamForm.id?'EDIT PARTNERSHIP':'NEW PARTNERSHIP'}</span><h4>{doublesTeamForm.id?'Edit Doubles Team':'Add Doubles Team'}</h4><small>Choose the event and age category first, then select the partners.</small></div>
+          <button type="button" className="mini" onClick={resetDoublesTeamEditor}>Close</button>
+        </div>
+        <div className="doubles-team-editor-grid">
+          <label><span>Event</span><select value={doublesTeamForm.event_name} onChange={e=>setDoublesTeamForm({...doublesTeamForm,event_name:e.target.value,age_group:'All',player_a_id:'',player_b_id:''})}>
+            <option value="MD">MD — Boys/Men Doubles</option>
+            <option value="WD">WD — Girls/Women Doubles</option>
+            <option value="XD">XD — Mixed Doubles</option>
+          </select></label>
+          <label><span>Category / Age</span><select value={doublesTeamForm.age_group} onChange={e=>setDoublesTeamForm({...doublesTeamForm,age_group:e.target.value,player_a_id:'',player_b_id:''})}>
+            {doublesEditorAgeOptions.map(age=><option key={age} value={age}>{age==='All'?'All eligible ages':age}</option>)}
+          </select></label>
+          <Input label="Team name (optional)" value={doublesTeamForm.team_name} onChange={v=>setDoublesTeamForm({...doublesTeamForm,team_name:v})} placeholder="Defaults to Partner 1 / Partner 2"/>
+          <label><span>{doublesTeamForm.event_name==='XD'?'Male / Boys partner':'Partner 1'}</span><select value={doublesTeamForm.player_a_id} onChange={e=>setDoublesTeamForm({...doublesTeamForm,player_a_id:e.target.value})}>
+            <option value="">Select player</option>
+            {doublesEditorPartnerA.map(p=><option key={p.id} value={p.id} disabled={String(p.id)===String(doublesTeamForm.player_b_id)}>{p.full_name} · {doublesAgeGroup(p)} · {p.club || 'Independent'}</option>)}
+          </select></label>
+          <label><span>{doublesTeamForm.event_name==='XD'?'Female / Girls partner':'Partner 2'}</span><select value={doublesTeamForm.player_b_id} onChange={e=>setDoublesTeamForm({...doublesTeamForm,player_b_id:e.target.value})}>
+            <option value="">Select player</option>
+            {doublesEditorPartnerB.map(p=><option key={p.id} value={p.id} disabled={String(p.id)===String(doublesTeamForm.player_a_id)}>{p.full_name} · {doublesAgeGroup(p)} · {p.club || 'Independent'}</option>)}
+          </select></label>
+        </div>
+        <div className="actions">
+          <button className="button"><CheckCircle2 size={15}/> {doublesTeamForm.id?'Save Team Changes':'Add Doubles Team'}</button>
+          <button type="button" className="button secondary" onClick={resetDoublesTeamEditor}>Cancel</button>
+        </div>
+      </form>}
 
       <div className="records-summary">
         <div><small>Active saved teams</small><strong>{doublesTeams.length}</strong></div>
@@ -1027,11 +1187,11 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
               <td>{team.losses || 0}</td>
               <td><b>{Number(team.win_rate || 0).toFixed(1)}%</b></td>
               <td><span className="badge green">{team.status || 'Active'}</span></td>
-              <td><button type="button" className="mini danger" onClick={()=>archiveDoublesTeam(team)}>Archive</button></td>
+              <td><div className="team-row-actions"><button type="button" className="mini" onClick={()=>editDoublesTeam(team)}>Edit</button><button type="button" className="mini danger" onClick={()=>archiveDoublesTeam(team)}><Trash2 size={13}/> Delete</button></div></td>
             </tr>)}
           </tbody>
         </table>
-        {!loadingDoubles && !doublesTeams.length && <div className="empty">No active doubles teams found for this filter. Create pairs from a tournament’s MD, WD or XD setup and they will appear here automatically.</div>}
+        {!loadingDoubles && !doublesTeams.length && <div className="empty">No active doubles teams found for this filter. Use Add Team here, or create pairs from a tournament’s MD, WD or XD setup.</div>}
         {loadingDoubles && <div className="empty">Loading doubles team records…</div>}
       </div>
     </section>}
@@ -1133,6 +1293,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const [historyDetails, setHistoryDetails] = useState({});
   const [doublesPairs, setDoublesPairs] = useState([{a:'',b:''}]);
   const [savedDoublesTeams, setSavedDoublesTeams] = useState([]);
+  const [tournamentPlayers, setTournamentPlayers] = useState(players);
   const [loadingDoublesTeams, setLoadingDoublesTeams] = useState(false);
   const [bracketZoom, setBracketZoom] = useState(1);
   const [showCreate, setShowCreate] = useState(tournaments.length === 0);
@@ -1155,6 +1316,13 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
 
   useEffect(() => { if (!selectedId && tournaments.length) setSelectedId(tournaments[0].id); }, [tournaments, selectedId]);
   useEffect(() => { if (selectedId) load(selectedId); }, [selectedId]);
+  useEffect(() => {
+    let cancelled=false;
+    api('/players?category=All&status=Active')
+      .then(rows=>{ if(!cancelled) setTournamentPlayers(Array.isArray(rows) ? rows : players); })
+      .catch(()=>{ if(!cancelled) setTournamentPlayers(players); });
+    return ()=>{cancelled=true;};
+  }, [selectedId]);
   useEffect(() => {
     if (!['MD','WD','XD'].includes(selectedEvent)) {
       setSavedDoublesTeams([]);
@@ -1200,34 +1368,36 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     return () => { cancelled = true; };
   }, [tournaments]);
 
+  const isDoublesEvent = ['MD','WD','XD'].includes(selectedEvent);
+  const doublesCategoryOptions = useMemo(() => doublesAgeOptions(tournamentPlayers, selectedEvent), [tournamentPlayers, selectedEvent]);
+  const setupCategoryOptions = isDoublesEvent ? doublesCategoryOptions : categoryOptions;
+
   const candidates = useMemo(() => {
-    return players.filter(p => {
+    return tournamentPlayers.filter(p => {
       if (p.status !== 'Active') return false;
-      const categoryOk = draw.category_code === 'All' || p.category_code === draw.category_code;
-      if (!categoryOk) return false;
       const event = (draw.event_name || selectedEvent || 'MS').toUpperCase();
-      const gender = String(p.gender || '').trim().toLowerCase();
-      const eventType = String(p.event_type || '').trim().toLowerCase();
-      const isMen = gender === 'men' || gender === 'male' || gender === 'boys' || gender === 'boy' || eventType.includes("men's") || eventType.includes('boys');
-      const isWomen = gender === 'women' || gender === 'female' || gender === 'girls' || gender === 'girl' || eventType.includes("women's") || eventType.includes('girls');
-      if (event === 'MS' || event === 'MD') return isMen;
-      if (event === 'WS' || event === 'WD') return isWomen;
-      if (event === 'XD') return isMen || isWomen;
+      const categoryOk = draw.category_code === 'All' || (
+        ['MD','WD','XD'].includes(event)
+          ? playerMatchesDoublesAge(p, draw.category_code)
+          : p.category_code === draw.category_code
+      );
+      if (!categoryOk) return false;
+      const bucket=doublesGenderBucket(p);
+      if (event === 'MS' || event === 'MD') return bucket === 'M';
+      if (event === 'WS' || event === 'WD') return bucket === 'W';
+      if (event === 'XD') return bucket === 'M' || bucket === 'W';
       return true;
     });
-  }, [players, draw.category_code, draw.event_name, selectedEvent]);
+  }, [tournamentPlayers, draw.category_code, draw.event_name, selectedEvent]);
 
-  const isDoublesEvent = ['MD','WD','XD'].includes(selectedEvent);
-  const genderBucket = p => {
-    const gender=String(p?.gender || '').trim().toLowerCase();
-    const eventType=String(p?.event_type || '').trim().toLowerCase();
-    if (['men','male','boys','boy'].includes(gender) || eventType.includes("men's") || eventType.includes('boys')) return 'M';
-    if (['women','female','girls','girl'].includes(gender) || eventType.includes("women's") || eventType.includes('girls')) return 'W';
-    return 'O';
-  };
-  const doublesPartnerA = useMemo(() => selectedEvent==='XD' ? candidates.filter(p=>genderBucket(p)==='M') : candidates, [candidates, selectedEvent]);
-  const doublesPartnerB = useMemo(() => selectedEvent==='XD' ? candidates.filter(p=>genderBucket(p)==='W') : candidates, [candidates, selectedEvent]);
+  const doublesPartnerA = useMemo(() => selectedEvent==='XD' ? candidates.filter(p=>doublesGenderBucket(p)==='M') : candidates, [candidates, selectedEvent]);
+  const doublesPartnerB = useMemo(() => selectedEvent==='XD' ? candidates.filter(p=>doublesGenderBucket(p)==='W') : candidates, [candidates, selectedEvent]);
   const completeDoublesPairs = useMemo(() => doublesPairs.filter(p=>p.a && p.b), [doublesPairs]);
+  const visibleSavedDoublesTeams = useMemo(() => savedDoublesTeams.filter(team => {
+    if (draw.category_code === 'All') return true;
+    return String(team.player_a_age_group || '').toUpperCase() === String(draw.category_code).toUpperCase()
+      && String(team.player_b_age_group || '').toUpperCase() === String(draw.category_code).toUpperCase();
+  }), [savedDoublesTeams, draw.category_code]);
 
   const eventOptions = ['MS','WS','MD','WD','XD'];
   const eventDraws = useMemo(() => (detail?.draws || []).filter(d => (d.event_name || 'MS').toUpperCase() === selectedEvent), [detail, selectedEvent]);
@@ -1731,7 +1901,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             {eventOptions.map(event => {
               const info=eventProgress[event] || {exists:false,total:0,completed:0,live:0};
               const status=!info.exists ? 'Add draw' : (info.total && info.completed===info.total ? 'Complete' : (info.live ? info.completed+'/'+info.total+' · LIVE' : info.completed+'/'+info.total+' done'));
-              return <button key={event} type="button" className={selectedEvent===event ? 'event-tab active' : 'event-tab'} onClick={()=>{setSelectedEvent(event);setDoublesPairs([{a:'',b:''}]);setDraw(d=>({...d,event_name:event,draw_type:['MD','WD','XD'].includes(event)?'Doubles':'Singles',player_ids:[],title:detail.name+' — '+event}));}}>
+              return <button key={event} type="button" className={selectedEvent===event ? 'event-tab active' : 'event-tab'} onClick={()=>{setSelectedEvent(event);setDoublesPairs([{a:'',b:''}]);setDraw(d=>({...d,event_name:event,draw_type:['MD','WD','XD'].includes(event)?'Doubles':'Singles',category_code:'All',player_ids:[],title:detail.name+' — '+event}));}}>
                 <b>{event}</b><span>{status}</span>
               </button>;
             })}
@@ -1744,14 +1914,14 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           <form className="form" onSubmit={generateTournamentDraw}>
             <div className="tournament-setup-grid">
               <Input label="Draw title" value={draw.title} onChange={v=>setDraw({...draw,title:v})}/>
-              <label><span>Event</span><select value={selectedEvent} onChange={e=>{const event=e.target.value;setSelectedEvent(event);setDoublesPairs([{a:'',b:''}]);setDraw({...draw,event_name:event,draw_type:['MD','WD','XD'].includes(event)?'Doubles':'Singles',player_ids:[],title:detail.name+' — '+event});}}>
+              <label><span>Event</span><select value={selectedEvent} onChange={e=>{const event=e.target.value;setSelectedEvent(event);setDoublesPairs([{a:'',b:''}]);setDraw({...draw,event_name:event,draw_type:['MD','WD','XD'].includes(event)?'Doubles':'Singles',category_code:'All',player_ids:[],title:detail.name+' — '+event});}}>
                 <option value="MS">MS — Boys Singles</option>
                 <option value="WS">WS — Girls Singles</option>
                 <option value="MD">MD — Boys Doubles</option>
                 <option value="WD">WD — Girls Doubles</option>
                 <option value="XD">XD — Mixed Doubles</option>
               </select></label>
-              <label><span>Category / Age</span><select value={draw.category_code} onChange={e=>{setDoublesPairs([{a:'',b:''}]);setDraw({...draw,category_code:e.target.value,player_ids:[]});}}>{categoryOptions.map(c=><option key={c}>{c}</option>)}</select></label>
+              <label><span>{isDoublesEvent ? 'Doubles Category / Age' : 'Category / Age'}</span><select value={draw.category_code} onChange={e=>{setDoublesPairs([{a:'',b:''}]);setDraw({...draw,category_code:e.target.value,player_ids:[]});}}>{setupCategoryOptions.map(c=><option key={c} value={c}>{c==='All' ? (isDoublesEvent ? 'All eligible ages' : 'All') : c}</option>)}</select></label>
               <label className="check setup-seed"><input type="checkbox" checked={draw.seed_by_rank} onChange={e=>setDraw({...draw,seed_by_rank:e.target.checked})}/> Seed the first round by ranking</label>
             </div>
             {!isDoublesEvent ? <>
@@ -1784,7 +1954,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
                         {doublesPartnerB.map(p=><option key={p.id} value={p.id} disabled={usedElsewhere.has(String(p.id)) || String(pair.a)===String(p.id)}>{p.full_name} · {p.club || 'Independent'}</option>)}
                       </select></label>
                     </div>
-                    {pair.a && pair.b && <div className="paired-team-preview"><CheckCircle2 size={14}/><b>{players.find(p=>String(p.id)===String(pair.a))?.full_name}</b><span>&</span><b>{players.find(p=>String(p.id)===String(pair.b))?.full_name}</b></div>}
+                    {pair.a && pair.b && <div className="paired-team-preview"><CheckCircle2 size={14}/><b>{tournamentPlayers.find(p=>String(p.id)===String(pair.a))?.full_name}</b><span>&</span><b>{tournamentPlayers.find(p=>String(p.id)===String(pair.b))?.full_name}</b></div>}
                   </div>;
                 })}
               </div>
@@ -1794,13 +1964,13 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
               </div>
 
               <div className="doubles-records">
-                <div className="doubles-records-head"><div><span className="eyebrow">DOUBLES RECORDS</span><b>Saved {selectedEvent} partnerships</b></div><small>{loadingDoublesTeams?'Loading…':savedDoublesTeams.length+' saved'}</small></div>
+                <div className="doubles-records-head"><div><span className="eyebrow">DOUBLES RECORDS</span><b>Saved {selectedEvent} partnerships</b></div><small>{loadingDoublesTeams?'Loading…':visibleSavedDoublesTeams.length+' shown'}</small></div>
                 <div className="doubles-record-grid">
-                  {savedDoublesTeams.map(team=><div className="doubles-record-card" key={team.id}>
+                  {visibleSavedDoublesTeams.map(team=><div className="doubles-record-card" key={team.id}>
                     <div><b>{team.team_name}</b><small>{team.matches_played || 0} matches · {team.wins || 0}W–{team.losses || 0}L · {Number(team.win_rate || 0)}%</small></div>
                     <button type="button" className="mini" onClick={()=>useSavedDoublesTeam(team)}>Use Team</button>
                   </div>)}
-                  {!loadingDoublesTeams && !savedDoublesTeams.length && <div className="empty small">No saved {selectedEvent} partnerships yet. Teams created here will be saved automatically.</div>}
+                  {!loadingDoublesTeams && !visibleSavedDoublesTeams.length && <div className="empty small">No saved {selectedEvent} partnerships found for {draw.category_code==='All'?'the selected event':draw.category_code}. Teams created here will be saved automatically.</div>}
                 </div>
               </div>
             </div>}

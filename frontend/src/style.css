@@ -2304,3 +2304,57 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   .projector-title{align-items:flex-start;flex-wrap:wrap}
   .projector-bracket-tools{margin-left:0}
 }
+
+
+/* Doubles Team Records editor */
+.doubles-team-editor{
+  margin:14px 0;
+  padding:15px;
+  border:1px solid var(--ui-line);
+  border-radius:16px;
+  background:var(--ui-panel2);
+}
+.doubles-team-editor-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:12px;
+}
+.doubles-team-editor-head h4{
+  margin:2px 0 3px;
+  font-size:16px;
+}
+.doubles-team-editor-head small{
+  color:var(--ui-muted);
+  font-size:10px;
+}
+.doubles-team-editor-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+  align-items:end;
+}
+.doubles-team-editor-grid>label{
+  min-width:0;
+}
+.team-row-actions{
+  display:flex;
+  align-items:center;
+  gap:5px;
+  flex-wrap:nowrap;
+}
+:root[data-theme="light"] .doubles-team-editor{
+  background:
+    radial-gradient(circle at 90% 0%,rgba(17,166,111,.10),transparent 34%),
+    linear-gradient(135deg,rgba(224,236,234,.90),rgba(239,246,245,.82));
+  border-color:rgba(128,159,160,.48);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.82);
+}
+@media(max-width:1000px){
+  .doubles-team-editor-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:650px){
+  .doubles-team-editor-grid{grid-template-columns:1fr}
+  .doubles-team-editor-head{flex-direction:column}
+}
