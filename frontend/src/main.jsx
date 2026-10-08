@@ -98,7 +98,7 @@ function isSpecialJuniorCategory(value) {
 }
 
 function doublesAgeGroup(player) {
-  const numericAge=Number(player?.age);
+  const numericAge=player?.age === null || player?.age === undefined || player?.age === '' ? NaN : Number(player.age);
   if (Number.isFinite(numericAge) && numericAge>=0) return automaticAgeGroup(numericAge);
 
   const category=String(player?.category_code || '').trim().toUpperCase();
@@ -939,7 +939,8 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
     try {
       const suffix=event && event!=='All' ? '?event='+encodeURIComponent(event) : '';
       const rows=await api('/doubles/teams'+suffix);
-      setDoublesTeams(Array.isArray(rows) ? rows : []);
+      const list=Array.isArray(rows) ? rows : Array.isArray(rows?.teams) ? rows.teams : Array.isArray(rows?.items) ? rows.items : [];
+      setDoublesTeams(list);
     } catch (e) {
       setDoublesTeams([]);
       if (setMessage) setMessage(e.message || 'Could not load doubles team records.');
@@ -952,7 +953,7 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
     if (recordView === 'doubles') {
       loadDoublesTeams(doublesEvent);
       api('/players?category=All&status=Active')
-        .then(rows=>setDoublesPlayers(Array.isArray(rows)?rows:[]))
+        .then(rows=>setDoublesPlayers(Array.isArray(rows)?rows:Array.isArray(rows?.players)?rows.players:[]))
         .catch(()=>setDoublesPlayers([]));
     }
   }, [recordView, doublesEvent]);

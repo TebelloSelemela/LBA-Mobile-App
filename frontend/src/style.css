@@ -2508,3 +2508,23 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   .records-summary{grid-template-columns:1fr!important}
   .mobile-record-actions{grid-template-columns:1fr}
 }
+
+/* LESBAD mobile records: protect full width and never clip club/player fields */
+@media(max-width:900px){
+  html,body,#root,.app-shell,.main,.records-page{max-width:100%;min-width:0}
+  .records-page .grid.two{display:flex!important;flex-direction:column!important;gap:12px}
+  .records-page .panel,.records-page .form,.records-page .form-row{min-width:0!important;max-width:100%!important;width:100%!important}
+  .records-page .form-row{display:grid!important;grid-template-columns:minmax(0,1fr)!important}
+  .records-page .form label,.records-page .form input,.records-page .form select,.records-page .form textarea{width:100%!important;min-width:0!important;max-width:100%!important}
+  .mobile-player-list,.mobile-doubles-list{width:100%!important;min-width:0!important}
+  .player-card,.mobile-doubles-card{width:100%;min-width:0;max-width:100%;overflow:visible}
+  .player-card-head,.mobile-doubles-head{min-width:0;display:flex;flex-wrap:wrap;gap:8px}
+  .player-card-head>div,.mobile-doubles-head>div{min-width:0;flex:1 1 150px}
+  .player-card-head b,.mobile-doubles-head b,.mobile-record-details b,.player-card-head small,.mobile-doubles-head small{overflow-wrap:anywhere;white-space:normal!important;word-break:normal;max-width:100%}
+  .mobile-record-details{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px;width:100%;min-width:0}
+  .mobile-record-details>div{min-width:0;overflow:visible;padding:10px}
+  .mobile-points-row,.mobile-record-actions{display:flex;flex-wrap:wrap;gap:8px;min-width:0}
+  .mobile-points-row input{flex:1 1 110px;min-width:0}
+  .doubles-records-page .doubles-editor-grid{grid-template-columns:minmax(0,1fr)!important}
+}
+@media(max-width:380px){.mobile-record-details{grid-template-columns:minmax(0,1fr)!important}}
