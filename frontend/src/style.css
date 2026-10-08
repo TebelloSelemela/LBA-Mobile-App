@@ -2358,3 +2358,14 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   .doubles-team-editor-grid{grid-template-columns:1fr}
   .doubles-team-editor-head{flex-direction:column}
 }
+
+
+/* Active tournament list with non-destructive archive control */
+.tournament-active-list{display:grid;gap:8px}
+.tournament-list-item{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 34px;align-items:stretch;gap:6px;border-radius:15px}
+.tournament-list-item .draw-item{margin:0;width:100%;min-width:0}
+.tournament-list-item.selected .draw-item{border-color:var(--ui-green);box-shadow:0 0 0 1px rgba(49,211,154,.12)}
+.tournament-select-button{text-align:left}
+.tournament-archive-button{align-self:stretch;display:grid;place-items:center;width:34px;min-height:100%;border:1px solid var(--ui-line);border-radius:11px;background:var(--ui-panel2);color:var(--ui-muted);cursor:pointer}
+.tournament-archive-button:hover{color:#d15d5d;border-color:rgba(209,93,93,.45);background:rgba(209,93,93,.08)}
+:root[data-theme="light"] .tournament-archive-button{background:linear-gradient(145deg,rgba(248,251,251,.92),rgba(218,230,233,.85));box-shadow:0 5px 12px rgba(27,58,75,.07),inset 0 1px 0 rgba(255,255,255,.92)}

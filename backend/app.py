@@ -307,11 +307,16 @@ def create_app():
             sync_player_age_categories(con)
             total = con.execute("SELECT COUNT(*) FROM players").fetchone()[0]
             active = con.execute("SELECT COUNT(*) FROM players WHERE status='Active'").fetchone()[0]
-            categories = con.execute("SELECT COUNT(DISTINCT category_code) FROM players WHERE category_code IS NOT NULL AND category_code!=''").fetchone()[0]
+            categories = con.execute("""SELECT COUNT(DISTINCT category_code) FROM players
+                                      WHERE category_code IS NOT NULL AND category_code!=''
+                                        AND UPPER(COALESCE(category_code,'')) NOT LIKE '%JUNIOR%'
+                                        AND UPPER(COALESCE(age_group,''))!='JUNIOR'""").fetchone()[0]
             top = con.execute("SELECT id, full_name, category_code, club, rank_position, total_points, tournaments_played, age_group FROM players ORDER BY COALESCE(rank_position, 999999), total_points DESC, full_name LIMIT 6").fetchall()
             categories_breakdown = con.execute("""
                 SELECT category_code, event_type, age_group, COUNT(*) AS player_count
                 FROM players WHERE category_code IS NOT NULL AND category_code!=''
+                  AND UPPER(COALESCE(category_code,'')) NOT LIKE '%JUNIOR%'
+                  AND UPPER(COALESCE(age_group,''))!='JUNIOR'
                 GROUP BY category_code, event_type, age_group
                 ORDER BY player_count DESC, category_code
             """).fetchall()
@@ -737,6 +742,8 @@ def create_app():
             rows = con.execute("""
                 SELECT category_code, event_type, gender, age_group, COUNT(*) AS player_count
                 FROM players
+                WHERE UPPER(COALESCE(category_code,'')) NOT LIKE '%JUNIOR%'
+                  AND UPPER(COALESCE(age_group,''))!='JUNIOR'
                 GROUP BY category_code, event_type, gender, age_group
                 ORDER BY event_type, age_group
             """).fetchall()
@@ -1303,6 +1310,25 @@ def create_app():
             data["history"]=[dict(x) for x in history]
         return jsonify(data)
 
+    @app.route("/api/tournaments/<int:tournament_id>/archive", methods=["POST"])
+    @require_auth
+    def archive_tournament(tournament_id):
+        data=request.get_json(silent=True) or {}
+        archived=1 if bool(data.get("archived", True)) else 0
+        now=now_iso()
+        with db() as con:
+            tournament=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+            if not tournament:
+                return jsonify({"error":"Tournament not found"}),404
+            con.execute("UPDATE tournaments SET is_archived=?,updated_at=? WHERE id=?",(archived,now,tournament_id))
+            con.execute("INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at) VALUES(?,?,?,?,?)",
+                        (tournament_id,g.current_user["username"],
+                         "TOURNAMENT_ARCHIVED" if archived else "TOURNAMENT_RESTORED",
+                         "Archived from active tournament list" if archived else "Restored to active tournament list",now))
+            con.commit()
+            row=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+        return jsonify(dict(row))
+
     @app.route("/api/tournaments/<int:tournament_id>", methods=["PUT"])
     @require_auth
     def update_tournament(tournament_id):
@@ -1793,6 +1819,13 @@ def ensure_database():
             con.execute("ALTER TABLE players ADD COLUMN date_of_birth TEXT")
         except sqlite3.OperationalError:
             pass
+        # Tournament archive is an organisation flag; status and historical
+        # tournament results remain unchanged.
+        try:
+            con.execute("ALTER TABLE tournaments ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+
         # Doubles rankings use their own team points, separate from singles/player points.
         # Existing saved partnerships start at zero and keep all match-history statistics.
         try:
@@ -1837,7 +1870,8 @@ def ensure_database():
             third_place_name TEXT,
             finished_by TEXT,
             finished_at TEXT,
-            event_podiums TEXT
+            event_podiums TEXT,
+            is_archived INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS match_games (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

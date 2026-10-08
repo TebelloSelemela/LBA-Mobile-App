@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users, Home, Menu, X, Sun, Moon, ShieldCheck, CalendarDays, CheckCircle2, ClipboardList, MonitorPlay, Maximize, Minimize, TrendingUp, Activity, UserRound, BarChart3 } from 'lucide-react';
+import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users, Home, Menu, X, Sun, Moon, ShieldCheck, CalendarDays, CheckCircle2, ClipboardList, MonitorPlay, Maximize, Minimize, TrendingUp, Activity, UserRound, BarChart3, Archive } from 'lucide-react';
 import './style.css';
 import logo from './assets/lba-logo.png';
 
@@ -91,11 +91,22 @@ function doublesGenderBucket(player) {
   return 'O';
 }
 
+const OPERATIONAL_AGE_GROUPS=['U11','U13','U15','U17','18+'];
+
+function isSpecialJuniorCategory(value) {
+  return String(value || '').trim().toUpperCase().includes('JUNIOR');
+}
+
 function doublesAgeGroup(player) {
+  const numericAge=Number(player?.age);
+  if (Number.isFinite(numericAge) && numericAge>=0) return automaticAgeGroup(numericAge);
+
+  const category=String(player?.category_code || '').trim().toUpperCase();
+  const categoryMatch=category.match(/U11|U13|U15|U17|18\+/);
+  if (categoryMatch) return categoryMatch[0];
+
   const saved=String(player?.age_group || '').trim().toUpperCase();
-  if (saved && saved !== 'OPEN') return saved;
-  const match=String(player?.category_code || '').toUpperCase().match(/U\d{1,2}|18\+/);
-  return match ? match[0] : (saved || 'Open');
+  return OPERATIONAL_AGE_GROUPS.includes(saved) ? saved : 'Open';
 }
 
 function playerMatchesDoublesAge(player, selectedAge) {
@@ -110,18 +121,17 @@ function doublesAgeOptions(players, eventName) {
     const bucket=doublesGenderBucket(player);
     if (!['M','W'].includes(bucket)) return;
     const age=doublesAgeGroup(player);
-    if (!age || age === 'Open') return;
+    if (!OPERATIONAL_AGE_GROUPS.includes(age)) return;
     if (!counts[age]) counts[age]={M:0,W:0};
     counts[age][bucket]+=1;
   });
-  const eligible=Object.keys(counts).filter(age=>{
-    if (event==='MD') return counts[age].M>=2;
-    if (event==='WD') return counts[age].W>=2;
-    if (event==='XD') return counts[age].M>=1 && counts[age].W>=1;
-    return true;
+  const eligible=OPERATIONAL_AGE_GROUPS.filter(age=>{
+    const count=counts[age] || {M:0,W:0};
+    if (event==='MD') return count.M>=1;
+    if (event==='WD') return count.W>=1;
+    if (event==='XD') return count.M>=1 && count.W>=1;
+    return count.M+count.W>0;
   });
-  const order={'U11':11,'U13':13,'U15':15,'U17':17,'U19':19,'18+':30};
-  eligible.sort((a,b)=>(order[a]??90)-(order[b]??90) || a.localeCompare(b));
   return ['All',...eligible];
 }
 
@@ -192,7 +202,7 @@ function App() {
 
   const categoryOptions = useMemo(() => {
     const values = new Set(['All']);
-    players.forEach(player => player.category_code && values.add(player.category_code));
+    players.forEach(player => player.category_code && !isSpecialJuniorCategory(player.category_code) && values.add(player.category_code));
     return [...values].sort((a, b) => a === 'All' ? -1 : b === 'All' ? 1 : a.localeCompare(b));
   }, [players]);
 
@@ -1301,6 +1311,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     const saved=Number(localStorage.getItem('lba_tournament_split') || 32);
     return Number.isFinite(saved) ? Math.max(24,Math.min(46,saved)) : 32;
   });
+  const activeTournaments = useMemo(() => tournaments.filter(t=>Number(t.is_archived || 0)!==1), [tournaments]);
 
   async function load(id=selectedId) {
     if (!id) { setDetail(null); return null; }
@@ -1314,7 +1325,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     }
   }
 
-  useEffect(() => { if (!selectedId && tournaments.length) setSelectedId(tournaments[0].id); }, [tournaments, selectedId]);
+  useEffect(() => { if (!selectedId && activeTournaments.length) setSelectedId(activeTournaments[0].id); }, [activeTournaments, selectedId]);
   useEffect(() => { if (selectedId) load(selectedId); }, [selectedId]);
   useEffect(() => {
     let cancelled=false;
@@ -1591,6 +1602,25 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     });
   }
 
+  async function archiveTournament(tournament) {
+    if (!tournament?.id) return;
+    if (!window.confirm('Archive '+tournament.name+'? It will leave the active tournament list, but all draws, results and history will be preserved.')) return;
+    setBusy(true);
+    try {
+      await api('/tournaments/'+tournament.id+'/archive',{method:'POST',body:JSON.stringify({archived:true})});
+      if (selectedId===tournament.id) {
+        setSelectedId(null);
+        setDetail(null);
+      }
+      await refresh();
+      setMessage(tournament.name+' archived. Its tournament history and results are preserved.');
+    } catch (e) {
+      setMessage(e.message || 'Could not archive tournament.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function createTournament(e) {
     e.preventDefault();
     if (!form.name.trim()) { setMessage('Tournament name is required.'); return; }
@@ -1807,15 +1837,18 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
         <button className="button" disabled={busy}><Plus size={16}/> Create Tournament</button>
       </form>}
 
-      <div className="draw-list">
-        {tournaments.map(t=>
-          <button key={t.id} className={selectedId===t.id ? 'draw-item selected' : 'draw-item'} onClick={()=>setSelectedId(t.id)}>
-            <b>{t.name}</b>
-            <small>{t.tournament_code} · {t.status} · {t.completed_matches || 0}/{t.total_matches || 0} matches complete</small>
-            {t.start_date && <small>{t.start_date}{t.end_date && t.end_date!==t.start_date ? ' → '+t.end_date : ''}</small>}
-          </button>
+      <div className="draw-list tournament-active-list">
+        {activeTournaments.map(t=>
+          <div className={selectedId===t.id ? 'tournament-list-item selected' : 'tournament-list-item'} key={t.id}>
+            <button type="button" className="draw-item tournament-select-button" onClick={()=>setSelectedId(t.id)}>
+              <b>{t.name}</b>
+              <small>{t.tournament_code} · {t.status} · {t.completed_matches || 0}/{t.total_matches || 0} matches complete</small>
+              {t.start_date && <small>{t.start_date}{t.end_date && t.end_date!==t.start_date ? ' → '+t.end_date : ''}</small>}
+            </button>
+            <button type="button" className="tournament-archive-button" onClick={()=>archiveTournament(t)} title="Archive tournament" aria-label={'Archive '+t.name}><Archive size={15}/></button>
+          </div>
         )}
-        {!tournaments.length&&<div className="empty">No tournaments yet.</div>}
+        {!activeTournaments.length&&<div className="empty">No active tournaments. Create a tournament or review archived history below.</div>}
       </div>
 
       <div className="tournament-history-summary">
@@ -1823,13 +1856,13 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           <span className="eyebrow">ARCHIVE</span>
           <h3>Tournament History</h3>
         </div>
-        {tournaments.filter(t => t.status === 'Completed').map(t => {
+        {tournaments.filter(t => t.status === 'Completed' || Number(t.is_archived || 0)===1).map(t => {
           const h=historyDetails[t.id];
           const p=h?.podium || {};
           const ep=h?.event_podiums || {};
           const thirdPlayers=p.third_players || (p.third ? [p.third] : []);
           return <button className="history-card" key={'history-card-'+t.id} onClick={()=>setSelectedId(t.id)}>
-            <div className="history-card-title"><b>{t.name}</b><span>{t.venue || 'Venue not recorded'}</span></div>
+            <div className="history-card-title"><b>{t.name}</b><span>{Number(t.is_archived || 0)===1 ? 'Archived · ' : ''}{t.venue || 'Venue not recorded'}</span></div>
             {Object.keys(ep).length ? <div className="history-event-summary">
               {Object.entries(ep).map(([event,podium])=><div key={event}><b>{event}</b><span>1st: {podium.first || '—'}</span><span>2nd: {podium.second || '—'}</span><span>3rd: {podium.third || '—'}</span></div>)}
             </div> : <div className="history-card-grid">
@@ -1841,7 +1874,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             <small className="history-date">{t.start_date || (h?.finished_at ? formatLbaTime(h.finished_at).split(',')[0] : '—')}</small>
           </button>;
         })}
-        {!tournaments.some(t => t.status === 'Completed') && <div className="empty small">Completed tournaments will appear here.</div>}
+        {!tournaments.some(t => t.status === 'Completed' || Number(t.is_archived || 0)===1) && <div className="empty small">Completed or archived tournaments will appear here.</div>}
       </div>
     </div>
 

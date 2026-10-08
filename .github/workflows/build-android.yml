@@ -1,4 +1,4 @@
-name: Build LBA Android APK
+name: Build LESBAD MOBILE APK
 # Authentication flow release build
 
 on:
@@ -70,6 +70,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: lba-mobile-debug-apk
+          name: lesbad-mobile-debug-apk
           path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
