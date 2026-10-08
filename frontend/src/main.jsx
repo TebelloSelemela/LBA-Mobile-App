@@ -441,36 +441,162 @@ function App() {
 function ProjectorScreen({ draws, tournaments, refresh }) {
   const [selectedId, setSelectedId] = useState(draws[0]?.id || null);
   const [full, setFull] = useState(null);
+  const [tournamentDetail, setTournamentDetail] = useState(null);
   const [revealing, setRevealing] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [viewMode, setViewMode] = useState('draw');
+  const [projectorBracketZoom, setProjectorBracketZoom] = useState(1);
 
   useEffect(() => {
     if (!selectedId && draws[0]) setSelectedId(draws[0].id);
   }, [draws, selectedId]);
 
   useEffect(() => {
-    if (!selectedId) { setFull(null); return; }
-    api('/draws/'+selectedId).then(setFull).catch(() => setFull(null));
+    let cancelled=false;
+    if (!selectedId) {
+      setFull(null);
+      setTournamentDetail(null);
+      return () => {};
+    }
+    api('/draws/'+selectedId).then(async drawData => {
+      if (cancelled) return;
+      setFull(drawData);
+      if (drawData?.tournament_id) {
+        try {
+          const detail=await api('/tournaments/'+drawData.tournament_id);
+          if (!cancelled) setTournamentDetail(detail);
+        } catch {
+          if (!cancelled) setTournamentDetail(null);
+        }
+      } else {
+        setTournamentDetail(null);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setFull(null);
+        setTournamentDetail(null);
+      }
+    });
+    return () => { cancelled=true; };
   }, [selectedId]);
+
+  useEffect(() => {
+    const sync=()=>setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange',sync);
+    return ()=>document.removeEventListener('fullscreenchange',sync);
+  }, []);
 
   const draw = full || draws.find(d => d.id === selectedId) || draws[0];
   const matches = draw?.matches || [];
-  const tournamentName = draw?.event_name || draw?.title || 'LBA Tournament Draw';
+  const eventName=(draw?.event_name || draw?.category_code || 'MS').toUpperCase();
+  const tournamentName = tournamentDetail?.name || draw?.title || 'LBA Tournament Draw';
+
+  const projectorBracketModel = useMemo(() => {
+    if (!draw) return null;
+    const source=(tournamentDetail?.matches || matches || [])
+      .filter(m => !tournamentDetail || (m.event_name || 'MS').toUpperCase() === eventName);
+    if (!source.length) return null;
+
+    const byRound={};
+    source.forEach(m => {
+      const rn=Number(m.round_number || 1);
+      if (!byRound[rn]) byRound[rn]=[];
+      byRound[rn].push(m);
+    });
+    Object.values(byRound).forEach(list=>list.sort((a,b)=>Number(a.match_no||0)-Number(b.match_no||0)));
+
+    const first=(byRound[1] || []).filter(m => !(m.stage==='Final' && Number(m.match_no)===3));
+    const firstCount=first.length;
+    if (!firstCount) return null;
+
+    const totalRounds=Math.floor(Math.log2(firstCount))+1;
+    const stageForSlots=slots=>({2:'Final',4:'Semifinal',8:'Quarterfinal',16:'Round of 16',32:'Round of 32',64:'Round of 64',128:'Round of 128'}[slots] || ('Round of '+slots));
+    const columns=[];
+
+    for(let r=0;r<totalRounds;r++){
+      const expected=Math.max(1,Math.floor(firstCount/(2**r)));
+      const actual=(byRound[r+1] || []).filter(m => !(m.stage==='Final' && Number(m.match_no)===3));
+      const stage=stageForSlots(expected*2);
+      const colMatches=Array.from({length:expected},(_,i)=>{
+        if(actual[i]) return {...actual[i],virtual:false};
+        return {
+          id:'projector-standby-'+eventName+'-'+r+'-'+i,
+          match_no:i+1,
+          match_code:'STANDBY '+(i+1),
+          side_a:'Winner of previous match '+(i*2+1),
+          side_b:'Winner of previous match '+(i*2+2),
+          status:'Standby',
+          winner:null,
+          games:[],
+          virtual:true
+        };
+      });
+      columns.push({number:r+1,stage,matches:colMatches});
+    }
+    return {firstCount,columns};
+  }, [draw, tournamentDetail, matches, eventName]);
+
+  const projectorBracketGeometry = useMemo(() => {
+    if (!projectorBracketModel) return null;
+    const colWidth=285, gap=100, unit=118, cardHeight=94, topOffset=54;
+    const width=projectorBracketModel.columns.length*colWidth + Math.max(0,projectorBracketModel.columns.length-1)*gap;
+    const height=Math.max(170,projectorBracketModel.firstCount*unit)+topOffset;
+    const cardPosition=(roundIndex,matchIndex)=>{
+      const center=topOffset+(matchIndex+0.5)*(2**roundIndex)*unit;
+      return {x:roundIndex*(colWidth+gap),y:center-cardHeight/2,center};
+    };
+    const paths=[];
+    projectorBracketModel.columns.slice(0,-1).forEach((column,r)=>{
+      column.matches.forEach((_,i)=>{
+        const from=cardPosition(r,i);
+        const to=cardPosition(r+1,Math.floor(i/2));
+        const x1=from.x+colWidth, x2=to.x, mid=x1+gap/2;
+        paths.push({key:'projector-'+r+'-'+i,d:'M '+x1+' '+from.center+' H '+mid+' V '+to.center+' H '+x2});
+      });
+    });
+    return {colWidth,gap,unit,cardHeight,topOffset,width,height,cardPosition,paths};
+  }, [projectorBracketModel]);
 
   async function toggleFullscreen() {
     try {
+      const presentation=document.getElementById('projector-presentation');
       if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen();
-        setIsFullscreen(true);
+        if (presentation?.requestFullscreen) await presentation.requestFullscreen();
+        else await document.documentElement.requestFullscreen();
+        window.setTimeout(()=>fitProjectorBracket(),180);
       } else {
         await document.exitFullscreen();
-        setIsFullscreen(false);
       }
     } catch {}
   }
 
+  function fitProjectorBracket() {
+    if (!projectorBracketGeometry) return;
+    window.requestAnimationFrame(()=>{
+      const stage=document.querySelector('.projector-bracket-stage');
+      if (!stage) return;
+      const availableWidth=Math.max(320,stage.clientWidth-42);
+      const availableHeight=Math.max(260,stage.clientHeight-38);
+      const scale=Math.min(availableWidth/projectorBracketGeometry.width,availableHeight/projectorBracketGeometry.height);
+      const next=Math.max(0.38,Math.min(1.35,scale));
+      setProjectorBracketZoom(Math.round(next*100)/100);
+    });
+  }
+
+  function changeProjectorBracketZoom(delta) {
+    setProjectorBracketZoom(z=>Math.max(0.38,Math.min(1.5,Math.round((z+delta)*100)/100)));
+  }
+
+  useEffect(() => {
+    if (viewMode==='bracket' && projectorBracketGeometry) {
+      const timer=window.setTimeout(()=>fitProjectorBracket(),100);
+      return ()=>window.clearTimeout(timer);
+    }
+  }, [viewMode, selectedId, projectorBracketGeometry]);
+
   function revealDraw() {
+    setViewMode('draw');
     setRevealing(true);
     setRevealed(false);
     window.setTimeout(() => {
@@ -483,14 +609,18 @@ function ProjectorScreen({ draws, tournaments, refresh }) {
     <div className="projector-toolbar">
       <div>
         <span className="eyebrow">LIVE TOURNAMENT PRESENTATION</span>
-        <h2>Random Draw Presentation</h2>
-        <p>Use this screen on the projector to display the generated draw to players and officials.</p>
+        <h2>Projector Presentation</h2>
+        <p>Present either the generated match list or the full live knockout bracket to players and officials.</p>
       </div>
-      <div className="quick-actions">
+      <div className="projector-toolbar-controls">
         <select value={selectedId || ''} onChange={e => {setSelectedId(Number(e.target.value));setRevealed(false);}}>
           {!draws.length && <option value="">No draws available</option>}
-          {draws.map(d => <option key={d.id} value={d.id}>{d.title} · {d.category_code}</option>)}
+          {draws.map(d => <option key={d.id} value={d.id}>{d.title} · {(d.event_name || d.category_code || '').toUpperCase()}</option>)}
         </select>
+        <div className="projector-view-tabs">
+          <button type="button" className={viewMode==='draw'?'active':''} onClick={()=>setViewMode('draw')}><Shuffle size={15}/> Draw View</button>
+          <button type="button" className={viewMode==='bracket'?'active':''} onClick={()=>setViewMode('bracket')} disabled={!projectorBracketModel}><Trophy size={15}/> Bracket View</button>
+        </div>
         <button className="button" onClick={revealDraw} disabled={!matches.length || revealing}>
           <Shuffle size={16}/> {revealing ? 'Revealing…' : 'Reveal Draw'}
         </button>
@@ -501,27 +631,70 @@ function ProjectorScreen({ draws, tournaments, refresh }) {
     </div>
 
     {!draw ? <div className="projector-empty"><MonitorPlay size={60}/><h2>No draw available</h2><p>Generate a draw first, then return here to present it.</p></div> :
-      <div className="projector-board">
+      <div className={'projector-board projector-mode-'+viewMode} id="projector-presentation">
         <div className="projector-title">
           <img src={logo} alt="LBA" />
           <div>
             <span>LESOTHO BADMINTON ASSOCIATION</span>
             <h1>{tournamentName}</h1>
-            <p>{draw.category_code} · {draw.draw_type} · {matches.length} matches · {revealed ? 'DRAW REVEALED' : 'READY TO REVEAL'}</p>
+            <p>{eventName} · {viewMode==='bracket' ? 'LIVE KNOCKOUT BRACKET' : ((draw.draw_type || 'Draw')+' · '+matches.length+' matches · '+(revealed ? 'DRAW REVEALED' : 'READY TO REVEAL'))}</p>
           </div>
+          {viewMode==='bracket' && projectorBracketGeometry && <div className="projector-bracket-tools">
+            <button type="button" onClick={()=>changeProjectorBracketZoom(-0.08)}>−</button>
+            <b>{Math.round(projectorBracketZoom*100)}%</b>
+            <button type="button" onClick={()=>changeProjectorBracketZoom(0.08)}>+</button>
+            <button type="button" onClick={fitProjectorBracket}>Fit</button>
+          </div>}
         </div>
-        {revealing && <div className="draw-reveal-animation">
-          <Shuffle size={54}/><b>SHUFFLING PLAYERS…</b><span>Random draw generated by the tournament system</span>
+
+        {viewMode==='draw' && <>
+          {revealing && <div className="draw-reveal-animation">
+            <Shuffle size={54}/><b>SHUFFLING PLAYERS…</b><span>Random draw generated by the tournament system</span>
+          </div>}
+          {!revealing && <div className="projector-matches">
+            {matches.map(m => <div className="projector-match" key={m.id}>
+              <span className="projector-match-no">MATCH {m.match_no}</span>
+              <div><strong>{revealed ? m.side_a : 'PLAYER A'}</strong><em>VS</em><strong>{revealed ? m.side_b : 'PLAYER B'}</strong></div>
+            </div>)}
+          </div>}
+        </>}
+
+        {viewMode==='bracket' && <div className="projector-bracket-stage">
+          {!projectorBracketModel || !projectorBracketGeometry ? <div className="projector-empty compact"><Trophy size={46}/><h2>Bracket unavailable</h2><p>This draw does not contain enough match information to build a bracket.</p></div> :
+          <div className="projector-bracket-scroll">
+            <div className="projector-bracket-zoom-shell" style={{width:projectorBracketGeometry.width*projectorBracketZoom,height:projectorBracketGeometry.height*projectorBracketZoom}}>
+              <div className="projector-bracket-canvas" style={{width:projectorBracketGeometry.width,height:projectorBracketGeometry.height,transform:'scale('+projectorBracketZoom+')',transformOrigin:'top left'}}>
+                <svg className="projector-bracket-connectors" width={projectorBracketGeometry.width} height={projectorBracketGeometry.height} viewBox={'0 0 '+projectorBracketGeometry.width+' '+projectorBracketGeometry.height} aria-hidden="true">
+                  {projectorBracketGeometry.paths.map(p=><path key={p.key} d={p.d}/>)}
+                </svg>
+                {projectorBracketModel.columns.map((column,r)=>{
+                  const x=r*(projectorBracketGeometry.colWidth+projectorBracketGeometry.gap);
+                  const completed=column.matches.filter(m=>m.status==='Completed').length;
+                  return <React.Fragment key={'projector-column-'+r}>
+                    <div className="projector-bracket-stage-title" style={{left:x,width:projectorBracketGeometry.colWidth}}>
+                      <b>{column.stage}</b><span>{completed}/{column.matches.length}</span>
+                    </div>
+                    {column.matches.map((m,i)=>{
+                      const pos=projectorBracketGeometry.cardPosition(r,i);
+                      const scores=m.games?.length ? m.games.map(g=>g.side_a_score+'-'+g.side_b_score).join(' · ') : '';
+                      const state=m.virtual ? 'standby' : (m.status==='Completed' ? 'complete' : (m.status==='In Progress' ? 'progress' : 'pending'));
+                      return <div className={'projector-bracket-match '+state} style={{left:pos.x,top:pos.y,width:projectorBracketGeometry.colWidth}} key={'projector-path-'+m.id}>
+                        <small>{m.match_code || ('M'+m.match_no)} · {m.virtual ? 'STANDBY' : (m.status==='Completed' ? 'RESULT' : (m.status==='In Progress' ? 'LIVE' : 'READY'))}</small>
+                        <div className={m.winner===m.side_a?'winner':''}><span>{m.side_a}</span>{m.winner===m.side_a&&<b>✓</b>}</div>
+                        <div className={m.winner===m.side_b?'winner':''}><span>{m.side_b}</span>{m.winner===m.side_b&&<b>✓</b>}</div>
+                        {scores&&<em>{scores}</em>}
+                      </div>;
+                    })}
+                  </React.Fragment>;
+                })}
+              </div>
+            </div>
+          </div>}
         </div>}
-        {!revealing && <div className="projector-matches">
-          {matches.map((m,i) => <div className="projector-match" key={m.id}>
-            <span className="projector-match-no">MATCH {m.match_no}</span>
-            <div><strong>{revealed ? m.side_a : 'PLAYER A'}</strong><em>VS</em><strong>{revealed ? m.side_b : 'PLAYER B'}</strong></div>
-          </div>)}
-        </div>}
+
         <div className="projector-footer">
           <span>Generated by LBA Tournament System</span>
-          <span>{draw.created_at || ''}</span>
+          <span>{tournamentDetail?.venue ? tournamentDetail.venue+' · ' : ''}{eventName} · {draw.created_at || ''}</span>
         </div>
       </div>}
   </section>;
