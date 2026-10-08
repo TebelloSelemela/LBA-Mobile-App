@@ -2369,3 +2369,142 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
 .tournament-archive-button{align-self:stretch;display:grid;place-items:center;width:34px;min-height:100%;border:1px solid var(--ui-line);border-radius:11px;background:var(--ui-panel2);color:var(--ui-muted);cursor:pointer}
 .tournament-archive-button:hover{color:#d15d5d;border-color:rgba(209,93,93,.45);background:rgba(209,93,93,.08)}
 :root[data-theme="light"] .tournament-archive-button{background:linear-gradient(145deg,rgba(248,251,251,.92),rgba(218,230,233,.85));box-shadow:0 5px 12px rgba(27,58,75,.07),inset 0 1px 0 rgba(255,255,255,.92)}
+
+
+/* 2026 mobile Records hardening */
+.mobile-doubles-list{display:none}
+.mobile-record-details{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+  margin:12px 0;
+}
+.mobile-record-details>div{
+  min-width:0;
+  padding:9px 10px;
+  border:1px solid var(--ui-line);
+  border-radius:11px;
+  background:rgba(255,255,255,.025);
+}
+.mobile-record-details small{
+  display:block;
+  margin-bottom:4px;
+  color:var(--ui-muted);
+  font-size:9px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+.mobile-record-details b{
+  display:block;
+  color:var(--ui-text);
+  font-size:12px;
+  overflow-wrap:anywhere;
+}
+.mobile-rank{
+  flex:0 0 auto;
+  display:grid;
+  place-items:center;
+  min-width:38px;
+  min-height:34px;
+  padding:0 7px;
+  border-radius:10px;
+  background:rgba(49,211,154,.12);
+  color:var(--ui-green);
+}
+.mobile-points-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:8px;
+  align-items:center;
+  margin-top:10px;
+}
+.mobile-points-row input{min-width:0;width:100%}
+.mobile-points-row .mini{margin:0;white-space:nowrap}
+.mobile-record-actions{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+  margin-top:9px;
+}
+.mobile-record-actions .mini{
+  margin:0;
+  width:100%;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:5px;
+}
+.mobile-doubles-card{
+  min-width:0;
+  padding:14px;
+  border:1px solid var(--ui-line);
+  border-radius:16px;
+  background:var(--ui-input);
+}
+.mobile-doubles-head{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+  gap:9px;
+  align-items:start;
+}
+.mobile-doubles-head>div{min-width:0}
+.mobile-doubles-head>div>.badge{display:inline-block;margin-bottom:5px}
+.mobile-doubles-head b,
+.mobile-doubles-head small{display:block}
+.mobile-doubles-head b{
+  color:var(--ui-text);
+  font-size:13px;
+  line-height:1.3;
+  overflow-wrap:anywhere;
+}
+.mobile-doubles-head small{
+  margin-top:3px;
+  color:var(--ui-muted);
+  font-size:10px;
+  overflow-wrap:anywhere;
+}
+:root[data-theme="light"] .mobile-record-details>div,
+:root[data-theme="light"] .mobile-doubles-card{
+  background:linear-gradient(145deg,rgba(255,255,255,.90),rgba(230,240,239,.82));
+}
+
+@media(max-width:900px){
+  .records-page{width:100%;min-width:0;overflow:visible}
+  .records-page .grid.two{display:block!important;width:100%;min-width:0}
+  .records-page .panel{width:100%;max-width:100%;min-width:0;overflow:visible}
+  .records-page .form{width:100%;min-width:0}
+  .records-page .form-row{grid-template-columns:1fr!important;gap:0!important}
+  .records-page .form label,
+  .records-page .form input,
+  .records-page .form select,
+  .records-page .form textarea{min-width:0;max-width:100%}
+  .records-page .toolbar{width:100%;min-width:0}
+  .desktop-table{display:none!important}
+  .mobile-player-list{display:flex!important;flex-direction:column;gap:9px}
+  .mobile-doubles-list{display:flex;flex-direction:column;gap:9px}
+  .doubles-records-page{padding:14px!important}
+  .doubles-team-editor{padding:12px}
+  .doubles-team-editor-grid{grid-template-columns:1fr!important}
+  .doubles-team-editor-grid>label,
+  .doubles-team-editor-grid input,
+  .doubles-team-editor-grid select{min-width:0;max-width:100%}
+}
+@media(max-width:520px){
+  .records-page .panel{padding:12px!important;border-radius:16px}
+  .record-view-tabs{position:sticky;top:0;z-index:20}
+  .player-card{padding:12px}
+  .player-card-head{align-items:flex-start}
+  .player-card-head>.badge{font-size:10px;padding:4px 7px}
+  .mobile-record-details{grid-template-columns:1fr 1fr}
+  .mobile-points-row{grid-template-columns:1fr}
+  .mobile-points-row .mini{width:100%}
+  .mobile-doubles-head{grid-template-columns:auto minmax(0,1fr)}
+  .mobile-doubles-head>.badge{grid-column:2;justify-self:start}
+  .records-summary{grid-template-columns:1fr 1fr!important}
+}
+@media(max-width:380px){
+  .mobile-record-details,
+  .records-summary{grid-template-columns:1fr!important}
+  .mobile-record-actions{grid-template-columns:1fr}
+}

@@ -41,7 +41,10 @@ jobs:
       - name: Create Android project
         run: npx cap add android
 
-      - name: Configure Android network access and launcher icon
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Apply LESBAD MOBILE name, network access and launcher icon
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -53,13 +56,27 @@ jobs:
               manifest_index = next(i for i, line in enumerate(lines) if line.strip().startswith("<manifest"))
               lines.insert(manifest_index + 1, permission)
               text = "\n".join(lines) + "\n"
-              manifest.write_text(text)
+          text = text.replace('@mipmap/ic_launcher_round','@drawable/lesbad_mobile_icon')
+          text = text.replace('@mipmap/ic_launcher','@drawable/lesbad_mobile_icon')
+          manifest.write_text(text)
+
+          strings = Path("android/app/src/main/res/values/strings.xml")
+          s = strings.read_text()
+          import re
+          s = re.sub(r'<string name="app_name">.*?</string>','<string name="app_name">LESBAD MOBILE</string>',s)
+          s = re.sub(r'<string name="title_activity_main">.*?</string>','<string name="title_activity_main">LESBAD MOBILE</string>',s)
+          strings.write_text(s)
+
+          gradle = Path("android/app/build.gradle")
+          g = gradle.read_text()
+          g = re.sub(r'versionCode\s+\d+','versionCode 2',g)
+          g = re.sub(r'versionName\s+"[^"]+"','versionName "1.1"',g)
+          gradle.write_text(g)
           PY
           cp src/assets/lesbad-mobile-icon.webp android/app/src/main/res/drawable/lesbad_mobile_icon.webp
-          sed -i 's#@mipmap/ic_launcher_round#@drawable/lesbad_mobile_icon#g; s#@mipmap/ic_launcher#@drawable/lesbad_mobile_icon#g' android/app/src/main/AndroidManifest.xml
-
-      - name: Sync Capacitor
-        run: npx cap sync android
+          echo "Launcher icon entries:"
+          grep -n "android:icon\|android:roundIcon" android/app/src/main/AndroidManifest.xml
+          grep -n "app_name" android/app/src/main/res/values/strings.xml
 
       - name: Build debug APK
         working-directory: frontend/android

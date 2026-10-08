@@ -41,7 +41,8 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "icon": "electron/lesbad-icon.ico"
     },
     "artifactName": "LBA-Tournament-Desktop-${version}-${arch}.exe"
   },

@@ -19,8 +19,28 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Prepare LESBAD Windows icon
+        shell: pwsh
+        run: |
+          python -m pip install pillow --disable-pip-version-check
+          @'
+          from pathlib import Path
+          from PIL import Image
+          source=Path("src/assets/lesbad-mobile-icon.webp")
+          target=Path("electron")
+          target.mkdir(exist_ok=True)
+          image=Image.open(source).convert("RGBA")
+          image.save(target/"lesbad-icon.png","PNG",optimize=True)
+          image.save(target/"lesbad-icon.ico","ICO",sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])
+          print("Prepared LESBAD desktop icon:", target/"lesbad-icon.ico")
+          '@ | Set-Content prepare_icon.py
+          python prepare_icon.py
       - name: Build Windows desktop app
         env:
           VITE_API_BASE: https://lba-backend-production.up.railway.app/api

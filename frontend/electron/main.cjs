@@ -9,6 +9,7 @@ function createWindow() {
     minHeight: 700,
     autoHideMenuBar: true,
     backgroundColor: '#06111b',
+    icon: path.join(__dirname, 'lesbad-icon.png'),
     webPreferences: { contextIsolation: true, nodeIntegration: false }
   });
   Menu.setApplicationMenu(null);

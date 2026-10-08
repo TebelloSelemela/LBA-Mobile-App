@@ -114,25 +114,11 @@ function playerMatchesDoublesAge(player, selectedAge) {
 }
 
 function doublesAgeOptions(players, eventName) {
-  const event=String(eventName || '').toUpperCase();
-  const counts={};
-  (players || []).forEach(player=>{
-    if (player.status && player.status !== 'Active') return;
-    const bucket=doublesGenderBucket(player);
-    if (!['M','W'].includes(bucket)) return;
-    const age=doublesAgeGroup(player);
-    if (!OPERATIONAL_AGE_GROUPS.includes(age)) return;
-    if (!counts[age]) counts[age]={M:0,W:0};
-    counts[age][bucket]+=1;
-  });
-  const eligible=OPERATIONAL_AGE_GROUPS.filter(age=>{
-    const count=counts[age] || {M:0,W:0};
-    if (event==='MD') return count.M>=1;
-    if (event==='WD') return count.W>=1;
-    if (event==='XD') return count.M>=1 && count.W>=1;
-    return count.M+count.W>0;
-  });
-  return ['All',...eligible];
+  // The register must always expose the association's normal age bands.
+  // Player selectors below still filter by event gender and selected age.
+  void players;
+  void eventName;
+  return ['All',...OPERATIONAL_AGE_GROUPS];
 }
 
 function emptyForm() {
@@ -1128,7 +1114,31 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
           <select value={filters.status} onChange={e => setFilters({ ...filters, status: e.target.value })}><option>All</option><option>Active</option><option>Inactive</option></select>
           <button className="icon-btn" onClick={loadAll}><RefreshCw size={16}/></button>
         </div>
-        <div className="table-wrap"><table><thead><tr><th>Rank</th><th>Name</th><th>Category</th><th>Club</th><th>Points</th><th>Add latest points</th><th>Status</th><th></th></tr></thead><tbody>{players.map(p => <tr key={p.id}><td>#{p.rank_position || '-'}</td><td><b>{p.full_name}</b><small>{p.gender} · {p.age_group}{p.age!==null && p.age!==undefined ? ' · '+p.age+' yrs' : ' · DOB needed'}</small></td><td>{p.category_code}</td><td>{p.club || '-'}</td><td><b>{p.total_points}</b></td><td><div className="points-add"><input type="number" placeholder="+ points" value={pointInputs[p.id] || ''} onChange={e => setPointInputs(current => ({ ...current, [p.id]: e.target.value }))}/><button className="mini green" onClick={() => addPoints(p)}>Add</button></div></td><td><span className={p.status === 'Active' ? 'badge green' : 'badge'}>{p.status}</span></td><td><button className="mini" onClick={() => setForm({...emptyForm(),...p})}>Edit</button><button className="mini danger" onClick={() => deletePlayer(p.id)}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div>
+        <div className="table-wrap desktop-table"><table><thead><tr><th>Rank</th><th>Name</th><th>Category</th><th>Club</th><th>Points</th><th>Add latest points</th><th>Status</th><th></th></tr></thead><tbody>{players.map(p => <tr key={p.id}><td>#{p.rank_position || '-'}</td><td><b>{p.full_name}</b><small>{p.gender} · {p.age_group}{p.age!==null && p.age!==undefined ? ' · '+p.age+' yrs' : ' · DOB needed'}</small></td><td>{p.category_code}</td><td>{p.club || '-'}</td><td><b>{p.total_points}</b></td><td><div className="points-add"><input type="number" placeholder="+ points" value={pointInputs[p.id] || ''} onChange={e => setPointInputs(current => ({ ...current, [p.id]: e.target.value }))}/><button className="mini green" onClick={() => addPoints(p)}>Add</button></div></td><td><span className={p.status === 'Active' ? 'badge green' : 'badge'}>{p.status}</span></td><td><button className="mini" onClick={() => setForm({...emptyForm(),...p})}>Edit</button><button className="mini danger" onClick={() => deletePlayer(p.id)}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div>
+        <div className="mobile-player-list">
+          {players.map(p=><article className="player-card" key={'mobile-player-'+p.id}>
+            <div className="player-card-head">
+              <strong className="mobile-rank">#{p.rank_position || '-'}</strong>
+              <div><b>{p.full_name}</b><small>{p.gender || 'Gender not set'} · {p.age_group || 'Age group not set'}{p.age!==null && p.age!==undefined ? ' · '+p.age+' yrs' : ' · DOB needed'}</small></div>
+              <span className={p.status === 'Active' ? 'badge green' : 'badge'}>{p.status}</span>
+            </div>
+            <div className="mobile-record-details">
+              <div><small>Category</small><b>{p.category_code || '—'}</b></div>
+              <div><small>Club</small><b>{p.club || 'Independent'}</b></div>
+              <div><small>Points</small><b>{Number(p.total_points || 0).toLocaleString()}</b></div>
+              <div><small>Tournaments</small><b>{Number(p.tournaments_played || 0)}</b></div>
+            </div>
+            <div className="mobile-points-row">
+              <input type="number" placeholder="+ latest points" value={pointInputs[p.id] || ''} onChange={e => setPointInputs(current => ({ ...current, [p.id]: e.target.value }))}/>
+              <button type="button" className="mini green" onClick={() => addPoints(p)}>Add points</button>
+            </div>
+            <div className="mobile-record-actions">
+              <button type="button" className="mini" onClick={() => {setForm({...emptyForm(),...p});window.scrollTo({top:0,behavior:'smooth'});}}>Edit Player</button>
+              <button type="button" className="mini danger" onClick={() => deletePlayer(p.id)}><Trash2 size={14}/> Delete</button>
+            </div>
+          </article>)}
+          {!players.length&&<div className="empty small">No players match the current filters.</div>}
+        </div>
       </div>
     </section> : <section className="panel doubles-records-page">
       <div className="section-head records-section-head">
@@ -1182,7 +1192,7 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
         <div><small>Recorded wins</small><strong>{doublesTotals.wins}</strong></div>
       </div>
 
-      <div className="table-wrap doubles-records-table">
+      <div className="table-wrap doubles-records-table desktop-table">
         <table>
           <thead><tr><th>Rank</th><th>Event</th><th>Team</th><th>Points</th><th>Add points</th><th>Played</th><th>Wins</th><th>Losses</th><th>Win %</th><th>Status</th><th></th></tr></thead>
           <tbody>
@@ -1203,6 +1213,32 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
         </table>
         {!loadingDoubles && !doublesTeams.length && <div className="empty">No active doubles teams found for this filter. Use Add Team here, or create pairs from a tournament’s MD, WD or XD setup.</div>}
         {loadingDoubles && <div className="empty">Loading doubles team records…</div>}
+      </div>
+      <div className="mobile-doubles-list">
+        {doublesTeams.map(team=><article className="mobile-doubles-card" key={'mobile-team-'+team.id}>
+          <div className="mobile-doubles-head">
+            <strong className="doubles-rank">#{team.rank_position || '-'}</strong>
+            <div><span className="badge green">{team.event_name}</span><b>{team.team_name}</b><small>{team.player_a_name} + {team.player_b_name}</small></div>
+            <span className="badge green">{team.status || 'Active'}</span>
+          </div>
+          <div className="mobile-record-details doubles-mobile-stats">
+            <div><small>Points</small><b>{Number(team.total_points || 0).toLocaleString()}</b></div>
+            <div><small>Played</small><b>{team.matches_played || 0}</b></div>
+            <div><small>Wins</small><b>{team.wins || 0}</b></div>
+            <div><small>Losses</small><b>{team.losses || 0}</b></div>
+            <div><small>Win rate</small><b>{Number(team.win_rate || 0).toFixed(1)}%</b></div>
+          </div>
+          <div className="mobile-points-row">
+            <input type="number" placeholder="+ doubles points" value={doublesPointInputs[team.id] || ''} onChange={e=>setDoublesPointInputs(current=>({...current,[team.id]:e.target.value}))}/>
+            <button type="button" className="mini green" onClick={()=>addDoublesPoints(team)}>Add points</button>
+          </div>
+          <div className="mobile-record-actions">
+            <button type="button" className="mini" onClick={()=>editDoublesTeam(team)}>Edit Team</button>
+            <button type="button" className="mini danger" onClick={()=>archiveDoublesTeam(team)}><Trash2 size={13}/> Delete</button>
+          </div>
+        </article>)}
+        {!loadingDoubles && !doublesTeams.length && <div className="empty small">No active doubles teams found for this filter.</div>}
+        {loadingDoubles && <div className="empty small">Loading doubles team records…</div>}
       </div>
     </section>}
   </section>;
