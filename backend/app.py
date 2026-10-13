@@ -734,6 +734,40 @@ def create_app():
             con.commit()
         return jsonify({"deleted":True,"id":team_id})
 
+    @app.route("/api/settings", methods=["GET"])
+    @require_auth
+    def get_settings():
+        with db() as con:
+            rows=con.execute("SELECT setting_key,setting_value FROM app_settings").fetchall()
+            values={row["setting_key"]:row["setting_value"] for row in rows}
+            rule_count=con.execute("SELECT COUNT(*) FROM ranking_point_rules").fetchone()[0]
+        return jsonify({
+            "default_scoring_mode": values.get("default_scoring_mode","21"),
+            "scoring_modes": [
+                {"id":"21","label":"3 × 21 points","available":True},
+                {"id":"15","label":"3 × 15 points","available":True},
+                {"id":"relay","label":"Relay Scoring","available":False}
+            ],
+            "ranking_rules_loaded": int(rule_count or 0),
+            "ranking_rules_source": "Existing LESBAD ranking table" if rule_count else "Awaiting clean LESBAD ranking table upload"
+        })
+
+    @app.route("/api/settings", methods=["PUT"])
+    @require_auth
+    def update_settings():
+        data=request.get_json(silent=True) or {}
+        scoring=str(data.get("default_scoring_mode") or "").strip()
+        if scoring not in {"21","15"}:
+            return jsonify({"error":"Default scoring mode must be 21 or 15. Relay Scoring is reserved for a later release."}),400
+        now=now_iso()
+        with db() as con:
+            con.execute("""INSERT INTO app_settings(setting_key,setting_value,updated_at)
+                           VALUES('default_scoring_mode',?,?)
+                           ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value,updated_at=excluded.updated_at""",
+                        (scoring,now))
+            con.commit()
+        return get_settings()
+
     @app.route("/api/categories")
     @require_auth
     def categories():
@@ -755,8 +789,13 @@ def create_app():
         category = request.args.get("category", "").strip()
         q = request.args.get("q", "").strip()
         status = request.args.get("status", "").strip()
+        scope = request.args.get("scope", "all").strip().lower()
         sql = "SELECT * FROM players WHERE 1=1"
         args = []
+        if scope == "singles":
+            sql += " AND COALESCE(registration_scope,'Both') IN ('Singles','Both')"
+        elif scope == "doubles":
+            sql += " AND COALESCE(registration_scope,'Both') IN ('Doubles','Both')"
         if category and category != "All":
             sql += " AND category_code = ?"
             args.append(category)
@@ -785,8 +824,8 @@ def create_app():
             return jsonify({"error": str(exc)}), 400
         with db() as con:
             cur = con.execute("""
-                INSERT INTO players(category_code,event_type,gender,age_group,date_of_birth,club,rank_position,first_name,last_name,full_name,total_points,tournaments_played,status,notes,created_at,updated_at)
-                VALUES(:category_code,:event_type,:gender,:age_group,:date_of_birth,:club,:rank_position,:first_name,:last_name,:full_name,:total_points,:tournaments_played,:status,:notes,:created_at,:updated_at)
+                INSERT INTO players(category_code,event_type,gender,age_group,date_of_birth,club,rank_position,first_name,last_name,full_name,total_points,tournaments_played,status,registration_scope,notes,created_at,updated_at)
+                VALUES(:category_code,:event_type,:gender,:age_group,:date_of_birth,:club,:rank_position,:first_name,:last_name,:full_name,:total_points,:tournaments_played,:status,:registration_scope,:notes,:created_at,:updated_at)
             """, payload)
             con.commit()
             player = con.execute("SELECT * FROM players WHERE id=?", (cur.lastrowid,)).fetchone()
@@ -816,7 +855,7 @@ def create_app():
                     category_code=:category_code,event_type=:event_type,gender=:gender,age_group=:age_group,
                     date_of_birth=:date_of_birth,club=:club,rank_position=:rank_position,first_name=:first_name,last_name=:last_name,
                     full_name=:full_name,total_points=:total_points,tournaments_played=:tournaments_played,
-                    status=:status,notes=:notes,updated_at=:updated_at
+                    status=:status,registration_scope=:registration_scope,notes=:notes,updated_at=:updated_at
                 WHERE id=:id
             """, payload)
             con.commit()
@@ -1086,14 +1125,24 @@ def create_app():
             if draw_type.lower()=="doubles" and not explicit_pairs and len(players)<4:
                 return jsonify({"error":"Select at least four players (two teams) for a doubles knockout tournament."}),400
 
+            import random
             if seed_by_rank and not explicit_pairs:
-                players.sort(key=lambda x:(x.get("rank_position") is None,x.get("rank_position") or 999999))
+                players.sort(key=lambda x:(
+                    x.get("rank_position") is None or int(x.get("rank_position") or 0)<=0,
+                    int(x.get("rank_position") or 999999),
+                    -float(x.get("total_points") or 0)
+                ))
             elif not explicit_pairs:
-                import random; random.shuffle(players)
-            elif not seed_by_rank:
-                import random; random.shuffle(explicit_pairs)
+                random.shuffle(players)
+            elif seed_by_rank:
+                for pair in explicit_pairs:
+                    team=con.execute("SELECT total_points FROM doubles_teams WHERE id=?",(pair.get("team_id"),)).fetchone() if pair.get("team_id") else None
+                    pair["seed_points"]=float(team["total_points"] or 0) if team else 0
+                explicit_pairs.sort(key=lambda p:-float(p.get("seed_points") or 0))
+            else:
+                random.shuffle(explicit_pairs)
 
-            fixtures=build_fixtures(players,draw_type,explicit_pairs or None)
+            fixtures=build_fixtures(players,draw_type,explicit_pairs or None,seed_by_rank=seed_by_rank)
             if not fixtures:
                 return jsonify({"error":"This event needs at least two complete entrants/teams. Doubles requires complete pairs."}),400
             slots=len(fixtures)*2
@@ -1232,15 +1281,21 @@ def create_app():
         if not code:
             base=re.sub(r"[^A-Z0-9]+","-",name.upper()).strip("-")
             code=f"{base[:24] or 'LBA-TOURNAMENT'}-{datetime.now(ZoneInfo('Africa/Maseru')).strftime('%Y%m%d%H%M%S')[-6:]}"
+        scoring_mode=str(data.get("scoring_mode") or "21").strip()
+        if scoring_mode not in {"21","15"}:
+            return jsonify({"error":"Scoring mode must be 21 or 15."}),400
+        ranking_mode="automatic" if str(data.get("ranking_mode") or "manual").strip().lower()=="automatic" else "manual"
         now=now_iso()
         with db() as con:
+            rule_count=con.execute("SELECT COUNT(*) FROM ranking_point_rules").fetchone()[0]
+            ranking_award_status=("Pending ranking table" if ranking_mode=="automatic" and not rule_count else ("Ready" if ranking_mode=="automatic" else "Manual"))
             try:
                 cur=con.execute("""
-                    INSERT INTO tournaments(tournament_code,name,venue,start_date,end_date,status,description,created_by,created_at,updated_at)
-                    VALUES(?,?,?,?,?,?,?,?,?,?)
+                    INSERT INTO tournaments(tournament_code,name,venue,start_date,end_date,status,description,created_by,created_at,updated_at,scoring_mode,ranking_mode,ranking_award_status,ranking_points_awarded)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0)
                 """,(code,name,(data.get("venue") or "").strip(),(data.get("start_date") or "").strip(),
                     (data.get("end_date") or "").strip(),"Draft",(data.get("description") or "").strip(),
-                    g.current_user["username"],now,now))
+                    g.current_user["username"],now,now,scoring_mode,ranking_mode,ranking_award_status))
             except sqlite3.IntegrityError:
                 return jsonify({"error":"Tournament code already exists"}),409
             tid=cur.lastrowid
@@ -1339,12 +1394,17 @@ def create_app():
             status=(data.get("status") or t["status"]).strip()
             allowed_status={"Draft","Draw Generated","Live","Ready to Finish","Completed","Archived"}
             if status not in allowed_status: return jsonify({"error":"Invalid tournament status"}),400
+            scoring_mode=str(data.get("scoring_mode") if data.get("scoring_mode") is not None else t["scoring_mode"] or "21").strip()
+            if scoring_mode not in {"21","15"}:
+                return jsonify({"error":"Scoring mode must be 21 or 15."}),400
+            ranking_mode=str(data.get("ranking_mode") if data.get("ranking_mode") is not None else t["ranking_mode"] or "manual").strip().lower()
+            ranking_mode="automatic" if ranking_mode=="automatic" else "manual"
             now=now_iso()
-            con.execute("""UPDATE tournaments SET name=?,venue=?,start_date=?,end_date=?,status=?,description=?,updated_at=? WHERE id=?""",
+            con.execute("""UPDATE tournaments SET name=?,venue=?,start_date=?,end_date=?,status=?,description=?,scoring_mode=?,ranking_mode=?,updated_at=? WHERE id=?""",
                         ((data.get("name") or t["name"]).strip(),(data.get("venue") if data.get("venue") is not None else t["venue"]) or "",
                          (data.get("start_date") if data.get("start_date") is not None else t["start_date"]) or "",
                          (data.get("end_date") if data.get("end_date") is not None else t["end_date"]) or "",
-                         status,(data.get("description") if data.get("description") is not None else t["description"]) or "",now,tournament_id))
+                         status,(data.get("description") if data.get("description") is not None else t["description"]) or "",scoring_mode,ranking_mode,now,tournament_id))
             con.execute("INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at) VALUES(?,?,?,?,?)",
                         (tournament_id,g.current_user["username"],"TOURNAMENT_UPDATED",f"Status: {status}",now))
             con.commit()
@@ -1487,9 +1547,24 @@ def create_app():
             legacy_third=next(iter(event_podiums.values()))["third"] if len(event_podiums)==1 else "See event podiums"
             con.execute("UPDATE tournaments SET status='Completed',winner_name=?,runner_up_name=?,third_place_name=?,event_podiums=?,finished_by=?,finished_at=?,updated_at=? WHERE id=?",(legacy_first,legacy_second,legacy_third,json.dumps(event_podiums,separators=(",",":")),g.current_user["username"],now,now,tournament_id))
             con.execute("INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at) VALUES(?,?,?,?,?)",(tournament_id,g.current_user["username"],"TOURNAMENT_FINISHED",json.dumps({"event_podiums":event_podiums},separators=(",",":")),now))
+            award_result=apply_automatic_ranking_points(con,tournament_id,g.current_user["username"])
             con.commit()
             row=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
-        return jsonify({**dict(row),"event_podiums":event_podiums})
+        return jsonify({**dict(row),"event_podiums":event_podiums,"ranking_awards":award_result})
+
+    @app.route("/api/tournaments/<int:tournament_id>/recalculate-ranking-points", methods=["POST"])
+    @require_auth
+    def recalculate_ranking_points(tournament_id):
+        with db() as con:
+            t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+            if not t:
+                return jsonify({"error":"Tournament not found"}),404
+            if str(t["ranking_mode"] or "manual").lower()!="automatic":
+                return jsonify({"error":"This tournament uses manual ranking points."}),400
+            result=apply_automatic_ranking_points(con,tournament_id,g.current_user["username"])
+            con.commit()
+            row=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+        return jsonify({**dict(row),"ranking_awards":result})
 
     @app.route("/api/matches/<int:match_id>", methods=["GET"])
     @require_auth
@@ -1511,6 +1586,13 @@ def create_app():
         data=request.get_json(silent=True) or {}
         raw_games=data.get("games") or []
         if not isinstance(raw_games,list) or not raw_games:return jsonify({"error":"At least one game score is required"}),400
+        with db() as score_con:
+            score_context=score_con.execute("""SELECT COALESCE(t.scoring_mode,'21') AS scoring_mode
+                                               FROM draw_matches dm
+                                               JOIN draws d ON d.id=dm.draw_id
+                                               LEFT JOIN tournaments t ON t.id=d.tournament_id
+                                               WHERE dm.id=?""",(match_id,)).fetchone()
+        scoring_mode=str((score_context["scoring_mode"] if score_context else "21") or "21")
         games=[]
         a_wins=b_wins=0
         for i,gme in enumerate(raw_games[:3],1):
@@ -1524,12 +1606,18 @@ def create_app():
             a=int(num_a); b=int(num_b)
             if a<0 or b<0:
                 return jsonify({"error":f"Game {i} scores cannot be negative."}),400
-            if a>30 or b>30:
-                return jsonify({"error":f"Game {i} scores cannot exceed 30."}),400
+            cap=21 if scoring_mode=="15" else 30
+            if a>cap or b>cap:
+                return jsonify({"error":f"Game {i} scores cannot exceed {cap} in this tournament's scoring mode."}),400
             if a==b:return jsonify({"error":f"Game {i} cannot end in a tie."}),400
             high=max(a,b); low=min(a,b)
-            valid=(high==21 and low<=19) or (20<=low<high<=29 and high-low>=2) or (high==30 and low in range(0,30))
-            if not valid:return jsonify({"error":f"Game {i} is not a valid badminton score. Use 21 points, win by 2 after 20-all, with 30 as the cap."}),400
+            if scoring_mode=="15":
+                valid=(high==15 and low<=13) or (14<=low<high<=20 and high-low>=2) or (high==21 and low<=20)
+                rule_text="15 points, win by 2 after 14-all, with 21 as the cap"
+            else:
+                valid=(high==21 and low<=19) or (20<=low<high<=29 and high-low>=2) or (high==30 and low<=29)
+                rule_text="21 points, win by 2 after 20-all, with 30 as the cap"
+            if not valid:return jsonify({"error":f"Game {i} is not valid for this tournament. Use {rule_text}."}),400
             games.append((i,a,b))
             if a>b:a_wins+=1
             else:b_wins+=1
@@ -1825,6 +1913,17 @@ def ensure_database():
             con.execute("ALTER TABLE tournaments ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass
+        for table, column, definition in [
+            ("players", "registration_scope", "TEXT NOT NULL DEFAULT 'Both'"),
+            ("tournaments", "scoring_mode", "TEXT NOT NULL DEFAULT '21'"),
+            ("tournaments", "ranking_mode", "TEXT NOT NULL DEFAULT 'manual'"),
+            ("tournaments", "ranking_award_status", "TEXT NOT NULL DEFAULT 'Manual'"),
+            ("tournaments", "ranking_points_awarded", "INTEGER NOT NULL DEFAULT 0"),
+        ]:
+            try:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            except sqlite3.OperationalError:
+                pass
 
         # Doubles rankings use their own team points, separate from singles/player points.
         # Existing saved partnerships start at zero and keep all match-history statistics.
@@ -1849,6 +1948,7 @@ def ensure_database():
             total_points REAL DEFAULT 0,
             tournaments_played INTEGER DEFAULT 0,
             status TEXT DEFAULT 'Active',
+            registration_scope TEXT NOT NULL DEFAULT 'Both',
             notes TEXT,
             created_at TEXT,
             updated_at TEXT
@@ -1871,7 +1971,11 @@ def ensure_database():
             finished_by TEXT,
             finished_at TEXT,
             event_podiums TEXT,
-            is_archived INTEGER NOT NULL DEFAULT 0
+            is_archived INTEGER NOT NULL DEFAULT 0,
+            scoring_mode TEXT NOT NULL DEFAULT '21',
+            ranking_mode TEXT NOT NULL DEFAULT 'manual',
+            ranking_award_status TEXT NOT NULL DEFAULT 'Manual',
+            ranking_points_awarded INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS match_games (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1980,6 +2084,32 @@ def ensure_database():
         CREATE INDEX IF NOT EXISTS idx_email_tokens_hash ON email_tokens(token_hash);
         CREATE INDEX IF NOT EXISTS idx_match_games_match ON match_games(match_id);
         CREATE INDEX IF NOT EXISTS idx_tournament_audit_tournament ON tournament_audit(tournament_id);
+        CREATE TABLE IF NOT EXISTS app_settings (
+            setting_key TEXT PRIMARY KEY,
+            setting_value TEXT NOT NULL,
+            updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS ranking_point_rules (
+            placement_code TEXT PRIMARY KEY,
+            points REAL NOT NULL,
+            source_label TEXT,
+            updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS ranking_awards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tournament_id INTEGER NOT NULL,
+            event_name TEXT NOT NULL,
+            recipient_type TEXT NOT NULL,
+            recipient_id INTEGER NOT NULL,
+            placement_code TEXT NOT NULL,
+            points REAL NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(tournament_id,event_name,recipient_type,recipient_id),
+            FOREIGN KEY(tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_ranking_awards_tournament ON ranking_awards(tournament_id,event_name);
+        INSERT OR IGNORE INTO app_settings(setting_key,setting_value,updated_at) VALUES('default_scoring_mode','21','SYSTEM');
 
         """)
         # Tournament schema migrations for databases created before the knockout workflow.
@@ -2197,6 +2327,11 @@ def clean_player_payload(data, updating=False):
         "total_points": nullable_float(data.get("total_points", data.get("points"))) or 0,
         "tournaments_played": nullable_int(data.get("tournaments_played")) or 0,
         "status": data.get("status") or "Active",
+        "registration_scope": (
+            data.get("registration_scope")
+            if str(data.get("registration_scope") or "").strip() in {"Singles","Doubles","Both"}
+            else "Both"
+        ),
         "notes": data.get("notes") or "",
         "created_at": now,
         "updated_at": now,
@@ -2291,68 +2426,227 @@ def _player_matches_draw_category(player, selected_category):
     return selected_age!="OPEN" and selected_age==age
 
 
-def build_fixtures(players, draw_type, doubles_pairs=None):
-    """Build a true power-of-two knockout bracket.
+def _ranking_rule_points(con):
+    return {str(r["placement_code"]).upper():float(r["points"] or 0) for r in con.execute("SELECT placement_code,points FROM ranking_point_rules").fetchall()}
 
-    Every entrant gets a fixed path through the draw. When the entrant count is
-    not a power of two, byes are assigned in Round 1 instead of changing the
-    bracket shape. This keeps Quarterfinal -> Semifinal -> Final paths stable.
-    """
-    if draw_type.lower() == "doubles":
-        entrants = []
-        if doubles_pairs:
-            for pair in doubles_pairs:
-                entrants.append({
-                    "name": pair["name"],
-                    "ids": pair["ids"],
-                    "team_id": pair.get("team_id")
-                })
+
+def _placement_for_stage(stage):
+    value=str(stage or "").strip().upper()
+    return {
+        "FINAL":"RUNNER_UP",
+        "SEMIFINAL":"SEMIFINALIST",
+        "QUARTERFINAL":"QUARTERFINALIST",
+        "ROUND OF 16":"R16",
+        "ROUND OF 32":"R32",
+        "ROUND OF 64":"R64",
+        "ROUND OF 128":"R128",
+    }.get(value)
+
+
+def _recipient_from_ids(con,event_name,ids_text):
+    ids=sorted({int(x) for x in str(ids_text or "").split(",") if x.strip().isdigit()})
+    event=str(event_name or "MS").upper()
+    if event in {"MD","WD","XD"}:
+        if len(ids)!=2:
+            return None
+        row=con.execute("""SELECT id FROM doubles_teams
+                           WHERE UPPER(event_name)=? AND status='Active'
+                             AND ((player_a_id=? AND player_b_id=?) OR (player_a_id=? AND player_b_id=?))
+                           ORDER BY id DESC LIMIT 1""",
+                        (event,ids[0],ids[1],ids[1],ids[0])).fetchone()
+        return ("doubles_team",int(row["id"])) if row else None
+    return ("player",ids[0]) if len(ids)==1 else None
+
+
+def apply_automatic_ranking_points(con,tournament_id,actor="SYSTEM"):
+    tournament=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+    if not tournament or str(tournament["ranking_mode"] or "manual").lower()!="automatic":
+        return {"status":"Manual","awarded":0}
+    rules=_ranking_rule_points(con)
+    if not rules:
+        con.execute("UPDATE tournaments SET ranking_award_status='Pending ranking table',ranking_points_awarded=0 WHERE id=?",(tournament_id,))
+        return {"status":"Pending ranking table","awarded":0,"missing_rules":["ALL"]}
+
+    rows=con.execute("""SELECT dm.*,UPPER(COALESCE(d.event_name,'MS')) AS event_name,d.stage,d.round_number
+                        FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
+                        WHERE d.tournament_id=? AND dm.status='Completed' AND dm.side_b!='Bye'
+                        ORDER BY d.event_name,d.round_number,dm.match_no,dm.id""",(tournament_id,)).fetchall()
+    plan={}
+    required=set()
+    for m in rows:
+        event=m["event_name"]
+        winner_ids=m["side_a_player_ids"] if m["winner"]==m["side_a"] else m["side_b_player_ids"]
+        loser_ids=m["side_b_player_ids"] if m["winner"]==m["side_a"] else m["side_a_player_ids"]
+        if str(m["stage"] or "").upper()=="FINAL" and int(m["match_no"] or 0)!=3:
+            win_rec=_recipient_from_ids(con,event,winner_ids)
+            lose_rec=_recipient_from_ids(con,event,loser_ids)
+            if win_rec:
+                plan[(event,*win_rec)]=("CHAMPION",)
+                required.add("CHAMPION")
+            if lose_rec:
+                plan[(event,*lose_rec)]=("RUNNER_UP",)
+                required.add("RUNNER_UP")
+        elif not (str(m["stage"] or "").upper()=="FINAL" and int(m["match_no"] or 0)==3):
+            placement=_placement_for_stage(m["stage"])
+            lose_rec=_recipient_from_ids(con,event,loser_ids)
+            if placement and lose_rec and (event,*lose_rec) not in plan:
+                plan[(event,*lose_rec)]=(placement,)
+                required.add(placement)
+
+    missing=sorted(code for code in required if code not in rules)
+    if missing:
+        con.execute("UPDATE tournaments SET ranking_award_status=?,ranking_points_awarded=0 WHERE id=?",
+                    ("Pending ranking rules: "+", ".join(missing),tournament_id))
+        return {"status":"Pending ranking rules","awarded":0,"missing_rules":missing}
+
+    now=now_iso()
+    total_delta=0.0
+    award_count=0
+    for (event,recipient_type,recipient_id),(placement,) in plan.items():
+        points=float(rules[placement])
+        existing=con.execute("""SELECT * FROM ranking_awards
+                                WHERE tournament_id=? AND event_name=? AND recipient_type=? AND recipient_id=?""",
+                             (tournament_id,event,recipient_type,recipient_id)).fetchone()
+        old=float(existing["points"] or 0) if existing else 0.0
+        delta=points-old
+        if abs(delta)>1e-9:
+            if recipient_type=="player":
+                con.execute("UPDATE players SET total_points=COALESCE(total_points,0)+?,tournaments_played=COALESCE(tournaments_played,0)+?,updated_at=? WHERE id=?",
+                            (delta,0 if existing else 1,now,recipient_id))
+            else:
+                con.execute("UPDATE doubles_teams SET total_points=COALESCE(total_points,0)+?,updated_at=? WHERE id=?",
+                            (delta,now,recipient_id))
+            total_delta+=delta
+        if existing:
+            con.execute("""UPDATE ranking_awards SET placement_code=?,points=?,updated_at=?
+                           WHERE id=?""",(placement,points,now,existing["id"]))
         else:
-            # Backward compatibility for older clients. The current tournament
-            # UI sends explicit admin-selected pairs instead of relying on order.
-            for i in range(0, len(players), 2):
-                a = players[i]
-                b = players[i + 1] if i + 1 < len(players) else None
-                if not b:
-                    continue
-                entrants.append({
-                    "name": f"{a['full_name']} / {b['full_name']}",
-                    "ids": f"{a['id']},{b['id']}"
-                })
+            con.execute("""INSERT INTO ranking_awards(tournament_id,event_name,recipient_type,recipient_id,placement_code,points,created_at,updated_at)
+                           VALUES(?,?,?,?,?,?,?,?)""",
+                        (tournament_id,event,recipient_type,recipient_id,placement,points,now,now))
+        award_count+=1
+
+    con.execute("UPDATE tournaments SET ranking_award_status='Awarded',ranking_points_awarded=1 WHERE id=?",(tournament_id,))
+    con.execute("""INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at)
+                   VALUES(?,?,?,?,?)""",
+                (tournament_id,actor,"RANKING_POINTS_RECALCULATED",
+                 json.dumps({"awards":award_count,"points_delta":total_delta},separators=(",",":")),now))
+    return {"status":"Awarded","awarded":award_count,"points_delta":total_delta}
+
+
+def _protected_seed_count(entrant_count):
+    if entrant_count >= 64:
+        return 8
+    if entrant_count >= 32:
+        return 4
+    if entrant_count >= 16:
+        return 3
+    if entrant_count >= 8:
+        return 2
+    return 0
+
+
+def build_fixtures(players, draw_type, doubles_pairs=None, seed_by_rank=False):
+    """Build a power-of-two knockout bracket.
+
+    When Seed by Ranking is enabled, only the strongest selected entrants are
+    protected: 8 entrants -> top 2; 16 -> top 3; 32 -> top 4; 64+ -> top 8.
+    Protected seeds are isolated into different first-round matches and all
+    remaining entrants are randomized around them.
+    """
+    import random
+    if draw_type.lower() == "doubles":
+        if doubles_pairs:
+            entrants=[{"name":p["name"],"ids":p["ids"],"team_id":p.get("team_id")} for p in doubles_pairs]
+        else:
+            entrants=[]
+            for i in range(0,len(players)-1,2):
+                a,b=players[i],players[i+1]
+                entrants.append({"name":f"{a['full_name']} / {b['full_name']}","ids":f"{a['id']},{b['id']}"})
     else:
-        entrants = [{"name": p["full_name"], "ids": str(p["id"])} for p in players]
+        entrants=[{"name":p["full_name"],"ids":str(p["id"])} for p in players]
 
-    if len(entrants) < 2:
+    n=len(entrants)
+    if n<2:
         return []
+    slots=1
+    while slots<n:
+        slots*=2
+    match_count=slots//2
+    bye_count=slots-n
 
-    slots = 1
-    while slots < len(entrants):
-        slots *= 2
-    bye_count = slots - len(entrants)
+    if not seed_by_rank:
+        fixture_pairs=[]
+        cursor=0
+        for _ in range(bye_count):
+            fixture_pairs.append((entrants[cursor],{"name":"Bye","ids":""}))
+            cursor+=1
+        while cursor<n:
+            fixture_pairs.append((entrants[cursor],entrants[cursor+1]))
+            cursor+=2
+    else:
+        protected=min(_protected_seed_count(n),match_count)
+        fixture_pairs=[[None,None] for _ in range(match_count)]
+        # Spread protected entrants from opposite ends of the bracket.
+        order=[]
+        lo,hi=0,match_count-1
+        while lo<=hi:
+            order.append(lo)
+            if lo!=hi:
+                order.append(hi)
+            lo+=1; hi-=1
+        for idx in range(protected):
+            fixture_pairs[order[idx]][0]=entrants[idx]
 
-    # Put each bye against a real entrant first, then pair the remaining
-    # entrants. This prevents Bye-vs-Bye fixtures and preserves a full bracket.
-    fixture_pairs = []
-    cursor = 0
-    for _ in range(bye_count):
-        fixture_pairs.append((entrants[cursor], {"name": "Bye", "ids": ""}))
-        cursor += 1
-    while cursor < len(entrants):
-        a = entrants[cursor]
-        b = entrants[cursor + 1]
-        fixture_pairs.append((a, b))
-        cursor += 2
+        # Byes go to protected seeds first, then other occupied matches.
+        remaining_byes=bye_count
+        for idx in range(protected):
+            if remaining_byes<=0: break
+            fixture_pairs[order[idx]][1]={"name":"Bye","ids":""}
+            remaining_byes-=1
 
-    fixtures = []
-    for a, b in fixture_pairs:
-        fixtures.append({
-            "match_no": len(fixtures) + 1,
-            "side_a": a["name"],
-            "side_b": b["name"],
-            "side_a_player_ids": a["ids"],
-            "side_b_player_ids": b["ids"]
-        })
-    return fixtures
+        rest=entrants[protected:]
+        random.shuffle(rest)
+
+        # Fill one real opponent into each seeded match before filling empty matches.
+        for pair in fixture_pairs:
+            if pair[0] is not None and pair[1] is None and rest:
+                pair[1]=rest.pop()
+
+        # Any extra byes are assigned to an occupied one-sided match.
+        while remaining_byes>0:
+            placed=False
+            for pair in fixture_pairs:
+                if pair[0] is not None and pair[1] is None:
+                    pair[1]={"name":"Bye","ids":""}
+                    remaining_byes-=1; placed=True
+                    break
+            if not placed:
+                break
+
+        # Fill empty matches with the randomized remainder.
+        for pair in fixture_pairs:
+            if pair[0] is None and rest:
+                pair[0]=rest.pop()
+            if pair[1] is None and rest:
+                pair[1]=rest.pop()
+
+        # Complete any still-open side with a bye, but never create Bye-vs-Bye.
+        for pair in fixture_pairs:
+            if pair[0] is None and pair[1] is not None:
+                pair[0]=pair[1]; pair[1]={"name":"Bye","ids":""}
+            elif pair[0] is not None and pair[1] is None:
+                pair[1]={"name":"Bye","ids":""}
+
+    return [{
+        "match_no":i+1,
+        "side_a":a["name"],
+        "side_b":b["name"],
+        "side_a_player_ids":a["ids"],
+        "side_b_player_ids":b["ids"]
+    } for i,(a,b) in enumerate(fixture_pairs)]
+
+
 
 
 def get_draw(con, draw_id):
