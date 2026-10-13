@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users, Home, Menu, X, Sun, Moon, ShieldCheck, CalendarDays, CheckCircle2, ClipboardList, MonitorPlay, Maximize, Minimize, TrendingUp, Activity, UserRound, BarChart3, Archive } from 'lucide-react';
+import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users, Home, Menu, X, Sun, Moon, ShieldCheck, CalendarDays, CheckCircle2, ClipboardList, MonitorPlay, Maximize, Minimize, TrendingUp, Activity, UserRound, BarChart3, Archive, Settings as SettingsIcon, UserPlus } from 'lucide-react';
 import './style.css';
 import logo from './assets/lba-logo.png';
 
@@ -136,6 +136,7 @@ function emptyForm() {
     total_points: '',
     tournaments_played: 0,
     status: 'Active',
+    registration_scope: 'Both',
     notes: ''
   };
 }
@@ -158,6 +159,7 @@ function App() {
   const [players, setPlayers] = useState([]);
   const [draws, setDraws] = useState([]);
   const [tournaments, setTournaments] = useState([]);
+  const [appSettings, setAppSettings] = useState({default_scoring_mode:'21',scoring_modes:[],ranking_rules_loaded:0,ranking_rules_source:'Awaiting clean LESBAD ranking table upload'});
   const [form, setForm] = useState(emptyForm());
   const [filters, setFilters] = useState({ q: '', category: 'All', status: 'All' });
   const [pointInputs, setPointInputs] = useState({});
@@ -167,16 +169,18 @@ function App() {
     if (!getToken()) return;
     const params = new URLSearchParams(filters).toString();
     try {
-      const [dashboardData, playerData, drawData, tournamentData] = await Promise.all([
+      const [dashboardData, playerData, drawData, tournamentData, settingsData] = await Promise.all([
         api('/dashboard'),
-        api(`/players?${params}`),
+        api(`/players?${params}&scope=singles`),
         api('/draws'),
-        api('/tournaments')
+        api('/tournaments'),
+        api('/settings')
       ]);
       setDashboard(dashboardData);
       setPlayers(playerData);
       setDraws(drawData);
       setTournaments(tournamentData);
+      setAppSettings(settingsData);
     } catch (err) {
       if (err.status === 401) { sessionStorage.removeItem('lba_token'); sessionStorage.removeItem('lba_user'); setToken(''); setCurrentUser(null); setMessage('Your session has expired. Please sign in again.'); } else setMessage(err.message);
     }
@@ -436,7 +440,7 @@ function App() {
       <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
         <div className="brand"><img src={logo} alt="Lesotho Badminton Association logo" className="brand-logo" /><div><h1>Badminton Admin</h1><p>Lesotho Badminton Association</p></div><button className="close-menu" onClick={() => setMenuOpen(false)}><X size={20}/></button></div>
         {[
-          ['home','Overview',Home],['records','Records',Users],['draws','Draws',Shuffle],['tournaments','Tournaments',Trophy],['projector','Projector',MonitorPlay],['reports','Reports',Trophy]
+          ['home','Overview',Home],['records','Records',Users],['draws','Draws',Shuffle],['tournaments','Tournaments',Trophy],['projector','Projector',MonitorPlay],['reports','Reports',Trophy],['settings','Settings',SettingsIcon]
         ].map(([id,label,Icon]) => <button key={id} className={activeTab === id ? 'nav active' : 'nav'} onClick={() => {setActiveTab(id);setMenuOpen(false);}}><Icon size={18}/><span>{label}</span></button>)}
         <button className="nav" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}<span>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span></button>
         <button className="logout" onClick={logout}><Lock size={17}/> Sign out</button>
@@ -464,9 +468,10 @@ function App() {
         <div className="message">{message}</div>
         {activeTab === 'records' && <Records players={players} form={form} setForm={setForm} savePlayer={savePlayer} deletePlayer={deletePlayer} filters={filters} setFilters={setFilters} categoryOptions={categoryOptions} loadAll={loadAll} pointInputs={pointInputs} setPointInputs={setPointInputs} addPoints={addPoints} setMessage={setMessage} />}
         {activeTab === 'draws' && <Draws draws={draws} drawForm={drawForm} setDrawForm={setDrawForm} generateDraw={generateDraw} categoryOptions={categoryOptions} drawCandidates={drawCandidates} />}
-        {activeTab === 'tournaments' && <TournamentScreen tournaments={tournaments} players={players} categoryOptions={categoryOptions} refresh={loadAll} setMessage={setMessage} />}
+        {activeTab === 'tournaments' && <TournamentScreen tournaments={tournaments} players={players} categoryOptions={categoryOptions} refresh={loadAll} setMessage={setMessage} appSettings={appSettings} />}
         {activeTab === 'projector' && <ProjectorScreen draws={draws} tournaments={tournaments} refresh={loadAll} />}
         {activeTab === 'reports' && <Reports />}
+        {activeTab === 'settings' && <SettingsPanel settings={appSettings} setSettings={setAppSettings} setMessage={setMessage} />}
       </main>
       <nav className="mobile-nav">{[["home","Home",Home],["records","Players",Users],["draws","Draws",Shuffle],["tournaments","Tournaments",Trophy],["projector","Projector",MonitorPlay],["reports","Reports",Trophy]].map(([id,label,Icon])=><button key={id} className={activeTab===id?"active":""} onClick={()=>setActiveTab(id)}><Icon size={19}/><span>{label}</span></button>)}</nav>
     </div>
@@ -932,6 +937,8 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
   const [doublesPointInputs, setDoublesPointInputs] = useState({});
   const [doublesPlayers, setDoublesPlayers] = useState([]);
   const [showDoublesEditor, setShowDoublesEditor] = useState(false);
+  const [showDoublesPlayerEditor, setShowDoublesPlayerEditor] = useState(false);
+  const [doublesPlayerForm, setDoublesPlayerForm] = useState({...emptyForm(),registration_scope:'Doubles',rank_position:'',total_points:0});
   const [doublesTeamForm, setDoublesTeamForm] = useState({id:null,event_name:'MD',age_group:'All',player_a_id:'',player_b_id:'',team_name:''});
 
   async function loadDoublesTeams(event=doublesEvent) {
@@ -952,11 +959,55 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
   useEffect(() => {
     if (recordView === 'doubles') {
       loadDoublesTeams(doublesEvent);
-      api('/players?category=All&status=Active')
+      api('/players?category=All&status=Active&scope=doubles')
         .then(rows=>setDoublesPlayers(Array.isArray(rows)?rows:Array.isArray(rows?.players)?rows.players:[]))
         .catch(()=>setDoublesPlayers([]));
     }
   }, [recordView, doublesEvent]);
+
+  async function reloadDoublesPlayers() {
+    try {
+      const rows=await api('/players?category=All&status=Active&scope=doubles');
+      setDoublesPlayers(Array.isArray(rows)?rows:Array.isArray(rows?.players)?rows.players:[]);
+    } catch {
+      setDoublesPlayers([]);
+    }
+  }
+
+  function startAddDoublesPlayer() {
+    setDoublesPlayerForm({...emptyForm(),registration_scope:'Doubles',rank_position:'',total_points:0});
+    setShowDoublesPlayerEditor(true);
+  }
+
+  function editDoublesPlayer(player) {
+    setDoublesPlayerForm({...emptyForm(),...player,registration_scope:'Doubles',rank_position:'',total_points:0});
+    setShowDoublesPlayerEditor(true);
+  }
+
+  async function saveDoublesPlayer(e) {
+    e.preventDefault();
+    if (!String(doublesPlayerForm.full_name || '').trim()) {
+      if (setMessage) setMessage('Enter the doubles player’s full name.');
+      return;
+    }
+    if (!String(doublesPlayerForm.date_of_birth || '').trim()) {
+      if (setMessage) setMessage('Date of birth is required so the doubles age category can be calculated.');
+      return;
+    }
+    try {
+      const payload={...doublesPlayerForm,registration_scope:'Doubles',rank_position:null,total_points:0,tournaments_played:0};
+      const saved=await api(doublesPlayerForm.id?'/players/'+doublesPlayerForm.id:'/players',{
+        method:doublesPlayerForm.id?'PUT':'POST',
+        body:JSON.stringify(payload)
+      });
+      await reloadDoublesPlayers();
+      setDoublesPlayerForm({...emptyForm(),registration_scope:'Doubles',rank_position:'',total_points:0});
+      setShowDoublesPlayerEditor(false);
+      if (setMessage) setMessage((doublesPlayerForm.id?'Updated ':'Registered ')+(saved.full_name || 'doubles player')+' for doubles. Singles ranking points remain separate.');
+    } catch (e) {
+      if (setMessage) setMessage(e.message || 'Could not save doubles player.');
+    }
+  }
 
   function resetDoublesTeamEditor() {
     setDoublesTeamForm({id:null,event_name:'MD',age_group:'All',player_a_id:'',player_b_id:'',team_name:''});
@@ -1069,6 +1120,14 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
     return doublesEditorCandidates.filter(p=>doublesGenderBucket(p)==='W');
   },[doublesEditorCandidates,doublesTeamForm.event_name]);
 
+  const independentDoublesPlayers=useMemo(
+    ()=>(doublesPlayers || []).filter(p=>String(p.registration_scope || 'Both')==='Doubles'),
+    [doublesPlayers]
+  );
+  const doublesEligibilityMessage=doublesEditorCandidates.length
+    ? doublesEditorCandidates.length+' eligible registered player(s) in this age category.'
+    : 'No eligible registered doubles players in this age category. Register a doubles player below or choose another category.';
+
   const doublesTotals=doublesTeams.reduce((acc,team)=>{
     acc.points+=Number(team.total_points || 0);
     acc.matches+=Number(team.matches_played || 0);
@@ -1146,6 +1205,7 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
         <div><span className="eyebrow">PARTNERSHIP RANKINGS</span><h3>Doubles Team Records</h3><p>MD, WD and XD are ranked independently by doubles points. These points are separate from each player’s singles ranking points.</p></div>
         <div className="records-filter-actions">
           <button type="button" className="button" onClick={startAddDoublesTeam}><Plus size={15}/> Add Team</button>
+          <button type="button" className="button secondary" onClick={startAddDoublesPlayer}><UserPlus size={15}/> Register Doubles Player</button>
           <select value={doublesEvent} onChange={e=>setDoublesEvent(e.target.value)}>
             <option value="All">All doubles events</option>
             <option value="MD">MD — Boys/Men Doubles</option>
@@ -1153,6 +1213,36 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
             <option value="XD">XD — Mixed Doubles</option>
           </select>
           <button type="button" className="button secondary" onClick={()=>loadDoublesTeams(doublesEvent)} disabled={loadingDoubles}><RefreshCw size={15}/> {loadingDoubles?'Refreshing…':'Refresh'}</button>
+        </div>
+      </div>
+
+      {showDoublesPlayerEditor && <form className="doubles-player-editor form" onSubmit={saveDoublesPlayer}>
+        <div className="doubles-team-editor-head">
+          <div><span className="eyebrow">INDEPENDENT DOUBLES REGISTRATION</span><h4>{doublesPlayerForm.id?'Edit Doubles Player':'Register Doubles Player'}</h4><small>This registration is available to MD/WD/XD team selection and does not create singles ranking points.</small></div>
+          <button type="button" className="mini" onClick={()=>setShowDoublesPlayerEditor(false)}>Close</button>
+        </div>
+        <div className="doubles-player-editor-grid">
+          <Input label="Full name" value={doublesPlayerForm.full_name} onChange={v=>setDoublesPlayerForm({...doublesPlayerForm,full_name:v})}/>
+          <Input label="Date of birth" type="date" max={new Date().toISOString().slice(0,10)} value={doublesPlayerForm.date_of_birth} onChange={v=>setDoublesPlayerForm(current=>applyPlayerClassification(current,{date_of_birth:v}))}/>
+          <label><span>Gender</span><select value={doublesPlayerForm.gender || 'Men'} onChange={e=>setDoublesPlayerForm(current=>applyPlayerClassification(current,{gender:e.target.value}))}><option value="Men">Men / Boys</option><option value="Women">Women / Girls</option></select></label>
+          <Input label="Club" value={doublesPlayerForm.club} onChange={v=>setDoublesPlayerForm({...doublesPlayerForm,club:v})}/>
+          <Input label="Automatic age group" value={doublesPlayerForm.age_group || 'Enter DOB'} readOnly/>
+          <label><span>Notes</span><input value={doublesPlayerForm.notes || ''} onChange={e=>setDoublesPlayerForm({...doublesPlayerForm,notes:e.target.value})}/></label>
+        </div>
+        <div className="actions">
+          <button className="button"><UserPlus size={15}/> {doublesPlayerForm.id?'Save Doubles Player':'Register Doubles Player'}</button>
+          <button type="button" className="button secondary" onClick={()=>setShowDoublesPlayerEditor(false)}>Cancel</button>
+        </div>
+      </form>}
+
+      <div className="doubles-player-registry">
+        <div className="doubles-registry-head"><div><span className="eyebrow">DOUBLES-ONLY REGISTER</span><b>Independent Doubles Players</b></div><small>{independentDoublesPlayers.length} registered</small></div>
+        <div className="doubles-player-card-grid">
+          {independentDoublesPlayers.map(p=><article className="doubles-player-card" key={'doubles-player-'+p.id}>
+            <div><b>{p.full_name}</b><small>{p.gender} · {doublesAgeGroup(p)} · {p.club || 'Independent'}</small></div>
+            <button type="button" className="mini" onClick={()=>editDoublesPlayer(p)}>Edit</button>
+          </article>)}
+          {!independentDoublesPlayers.length&&<div className="empty small">No doubles-only players yet. Existing singles players remain eligible for doubles because their registration scope is Both.</div>}
         </div>
       </div>
 
@@ -1180,6 +1270,7 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
             {doublesEditorPartnerB.map(p=><option key={p.id} value={p.id} disabled={String(p.id)===String(doublesTeamForm.player_a_id)}>{p.full_name} · {doublesAgeGroup(p)} · {p.club || 'Independent'}</option>)}
           </select></label>
         </div>
+        <p className="helper doubles-eligibility-helper">{doublesEligibilityMessage}</p>
         <div className="actions">
           <button className="button"><CheckCircle2 size={15}/> {doublesTeamForm.id?'Save Team Changes':'Add Doubles Team'}</button>
           <button type="button" className="button secondary" onClick={resetDoublesTeamEditor}>Cancel</button>
@@ -1195,11 +1286,12 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
 
       <div className="table-wrap doubles-records-table desktop-table">
         <table>
-          <thead><tr><th>Rank</th><th>Event</th><th>Team</th><th>Points</th><th>Add points</th><th>Played</th><th>Wins</th><th>Losses</th><th>Win %</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Rank</th><th>Event</th><th>Age</th><th>Team</th><th>Points</th><th>Add points</th><th>Played</th><th>Wins</th><th>Losses</th><th>Win %</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {doublesTeams.map(team=><tr key={team.id}>
               <td><strong className="doubles-rank">#{team.rank_position || '-'}</strong></td>
               <td><span className="badge green">{team.event_name}</span></td>
+              <td><b>{team.player_a_age_group===team.player_b_age_group ? (team.player_a_age_group || '—') : ((team.player_a_age_group || '—')+' / '+(team.player_b_age_group || '—'))}</b></td>
               <td><b>{team.team_name}</b><small>{team.player_a_name} + {team.player_b_name}</small></td>
               <td><b>{Number(team.total_points || 0).toLocaleString()}</b></td>
               <td><div className="points-add doubles-points-add"><input type="number" placeholder="+ points" value={doublesPointInputs[team.id] || ''} onChange={e=>setDoublesPointInputs(current=>({...current,[team.id]:e.target.value}))}/><button type="button" className="mini green" onClick={()=>addDoublesPoints(team)}>Add</button></div></td>
@@ -1327,10 +1419,10 @@ function formatLbaTime(value) {
   }).format(date) + ' SAST';
 }
 
-function TournamentScreen({ tournaments, players, categoryOptions, refresh, setMessage }) {
+function TournamentScreen({ tournaments, players, categoryOptions, refresh, setMessage, appSettings }) {
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
-  const [form, setForm] = useState({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft'});
+  const [form, setForm] = useState({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft',scoring_mode:appSettings?.default_scoring_mode || '21',ranking_mode:'manual'});
   const [draw, setDraw] = useState({title:'Tournament Draw',category_code:'All',draw_type:'Singles',event_name:'MS',seed_by_rank:false,player_ids:[]});
   const [selectedEvent, setSelectedEvent] = useState('MS');
   const [openResult, setOpenResult] = useState(null);
@@ -1366,7 +1458,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   useEffect(() => { if (selectedId) load(selectedId); }, [selectedId]);
   useEffect(() => {
     let cancelled=false;
-    api('/players?category=All&status=Active')
+    api('/players?category=All&status=Active&scope=all')
       .then(rows=>{ if(!cancelled) setTournamentPlayers(Array.isArray(rows) ? rows : players); })
       .catch(()=>{ if(!cancelled) setTournamentPlayers(players); });
     return ()=>{cancelled=true;};
@@ -1430,6 +1522,9 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           : p.category_code === draw.category_code
       );
       if (!categoryOk) return false;
+      const registrationScope=String(p.registration_scope || 'Both');
+      if (['MD','WD','XD'].includes(event) && registrationScope==='Singles') return false;
+      if (['MS','WS'].includes(event) && registrationScope==='Doubles') return false;
       const bucket=doublesGenderBucket(p);
       if (event === 'MS' || event === 'MD') return bucket === 'M';
       if (event === 'WS' || event === 'WD') return bucket === 'W';
@@ -1664,7 +1759,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     setBusy(true);
     try {
       const t = await api('/tournaments', {method:'POST', body:JSON.stringify(form)});
-      setForm({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft'});
+      setForm({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft',scoring_mode:appSettings?.default_scoring_mode || '21',ranking_mode:'manual'});
       await refresh();
       setSelectedId(t.id);
       setShowCreate(false);
@@ -1837,9 +1932,27 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       const result=await api('/tournaments/'+selectedId+'/finish',{method:'POST'});
       await load(selectedId);
       await refresh();
-      setMessage('Tournament finished. Champion: '+(result.winner_name || 'recorded')+'.');
+      const rankingNote=result.ranking_mode==='automatic'
+        ? ' Ranking points: '+(result.ranking_awards?.status || result.ranking_award_status || 'pending')+'.'
+        : ' Ranking points remain manual.';
+      setMessage('Tournament finished. Champion: '+(result.winner_name || 'recorded')+'.'+rankingNote);
     } catch (e) { setMessage(e.message); }
     finally { setBusy(false); }
+  }
+
+  async function recalculateRankingPoints() {
+    if (!selectedId) return;
+    setBusy(true);
+    try {
+      const result=await api('/tournaments/'+selectedId+'/recalculate-ranking-points',{method:'POST'});
+      await load(selectedId);
+      await refresh();
+      setMessage('Ranking points recalculation: '+(result.ranking_awards?.status || result.ranking_award_status || 'updated')+'.');
+    } catch (e) {
+      setMessage(e.message || 'Could not recalculate ranking points.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function exportFile(path, name) {
@@ -1871,6 +1984,11 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           <Input label="Start date" type="date" value={form.start_date} onChange={v=>setForm({...form,start_date:v})}/>
           <Input label="End date" type="date" value={form.end_date} onChange={v=>setForm({...form,end_date:v})}/>
         </div>
+        <div className="form-row">
+          <label><span>Scoring mode</span><select value={form.scoring_mode || '21'} onChange={e=>setForm({...form,scoring_mode:e.target.value})}><option value="21">3 × 21 points</option><option value="15">3 × 15 points</option></select></label>
+          <label><span>Ranking points</span><select value={form.ranking_mode || 'manual'} onChange={e=>setForm({...form,ranking_mode:e.target.value})}><option value="manual">Manual — normal tournament</option><option value="automatic">Automatic — fixed ranking tournament</option></select></label>
+        </div>
+        {form.ranking_mode==='automatic' && <div className="classification-note ranking-mode-note"><Trophy size={15}/><span>This tournament will use the existing LESBAD ranking-points table automatically once that table is loaded. Until then results are saved and awards remain Pending — no guessed points are added.</span></div>}
         <button className="button" disabled={busy}><Plus size={16}/> Create Tournament</button>
       </form>}
 
@@ -1880,6 +1998,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             <button type="button" className="draw-item tournament-select-button" onClick={()=>setSelectedId(t.id)}>
               <b>{t.name}</b>
               <small>{t.tournament_code} · {t.status} · {t.completed_matches || 0}/{t.total_matches || 0} matches complete</small>
+              <small>{t.scoring_mode==='15'?'3×15':'3×21'} · {t.ranking_mode==='automatic'?'Fixed ranking tournament':'Manual ranking points'}</small>
               {t.start_date && <small>{t.start_date}{t.end_date && t.end_date!==t.start_date ? ' → '+t.end_date : ''}</small>}
             </button>
             <button type="button" className="tournament-archive-button" onClick={()=>archiveTournament(t)} title="Archive tournament" aria-label={'Archive '+t.name}><Archive size={15}/></button>
@@ -1938,6 +2057,11 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             <div><small>Status</small><b>{detail.status}</b></div>
             <div className="tournament-time-meta"><small>System time · Lesotho / SAST</small><b>{formatLbaTime(detail.server_time)}</b><span>UTC+02:00</span></div>
           </div>
+          <div className="tournament-mode-strip">
+            <span><b>Scoring:</b> {detail.scoring_mode==='15'?'3 × 15':'3 × 21'}</span>
+            <span className={detail.ranking_mode==='automatic'?'badge green':'badge'}>{detail.ranking_mode==='automatic'?'Fixed ranking tournament':'Manual ranking points'}</span>
+            {detail.ranking_mode==='automatic' && <span><b>Award status:</b> {detail.ranking_award_status || 'Ready'}</span>}
+          </div>
         </div>
 
         {(Object.keys(eventPodiums).length || podium.first || podium.second || podium.third) > 0 && <div className="podium-card">
@@ -1992,7 +2116,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
                 <option value="XD">XD — Mixed Doubles</option>
               </select></label>
               <label><span>{isDoublesEvent ? 'Doubles Category / Age' : 'Category / Age'}</span><select value={draw.category_code} onChange={e=>{setDoublesPairs([{a:'',b:''}]);setDraw({...draw,category_code:e.target.value,player_ids:[]});}}>{setupCategoryOptions.map(c=><option key={c} value={c}>{c==='All' ? (isDoublesEvent ? 'All eligible ages' : 'All') : c}</option>)}</select></label>
-              <label className="check setup-seed"><input type="checkbox" checked={draw.seed_by_rank} onChange={e=>setDraw({...draw,seed_by_rank:e.target.checked})}/> Seed the first round by ranking</label>
+              <label className="check setup-seed"><input type="checkbox" checked={draw.seed_by_rank} onChange={e=>setDraw({...draw,seed_by_rank:e.target.checked})}/> Seed by ranking — protect top 2 of 8, top 3 of 16, top 4 of 32, top 8 of 64+</label>
             </div>
             {!isDoublesEvent ? <>
               <div className="participant-head"><b>Attending players</b><span>{draw.player_ids.length} selected</span></div>
@@ -2050,12 +2174,13 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           <div className="round-action-bar">
             <div>
               <b>{selectedEvent} knockout progression</b>
-              <small>{latestRound ? 'Latest generated round: '+latestRound.stage+'. ' : ''}Record results live; completed winners follow the fixed bracket path.</small>
+              <small>{latestRound ? 'Latest generated round: '+latestRound.stage+'. ' : ''}Scoring: {detail.scoring_mode==='15'?'3×15':'3×21'}. Record results live; completed winners follow the fixed bracket path.</small>
             </div>
             <div className="quick-actions">
               <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/bracket.pdf?event='+encodeURIComponent(selectedEvent),detail.tournament_code+'_'+selectedEvent+'_'+(latestRound?.stage || 'draw').replaceAll(' ','_')+'_draw.pdf')}><FileText size={16}/> Export This Event</button>
               {latestRoundComplete && latestRound?.stage !== 'Final' && <button className="mini advance-recovery" disabled={busy} onClick={()=>generateNextRound(false)} title="Use only if automatic advancement did not create the next round"><RefreshCw size={14}/> Advance Round</button>}
               {readyToFinish && detail.status !== 'Completed' && <button className="button" disabled={busy} onClick={finishTournament}><Trophy size={16}/> Declare Tournament Finished</button>}
+              {detail.status==='Completed' && detail.ranking_mode==='automatic' && <button className="button secondary" disabled={busy} onClick={recalculateRankingPoints}><RefreshCw size={14}/> Recalculate Ranking Points</button>}
             </div>
           </div>
 
@@ -2217,6 +2342,53 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           </section>
         </div>}
       </>}
+    </div>
+  </section>;
+}
+
+function SettingsPanel({ settings, setSettings, setMessage }) {
+  const [scoringMode,setScoringMode]=useState(settings?.default_scoring_mode || '21');
+  const [saving,setSaving]=useState(false);
+  useEffect(()=>setScoringMode(settings?.default_scoring_mode || '21'),[settings?.default_scoring_mode]);
+
+  async function saveSettings(e) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const data=await api('/settings',{method:'PUT',body:JSON.stringify({default_scoring_mode:scoringMode})});
+      setSettings(data);
+      setMessage('Settings saved. New tournaments will default to '+(scoringMode==='15'?'3 × 15':'3 × 21')+' scoring.');
+    } catch (e) {
+      setMessage(e.message || 'Could not save settings.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <section className="settings-page">
+    <div className="panel settings-panel">
+      <div className="section-head">
+        <div><span className="eyebrow">TOURNAMENT SETTINGS</span><h3>Scoring & Ranking</h3><p>Defaults apply to new tournaments. Every tournament keeps the scoring mode it was created with.</p></div>
+        <SettingsIcon size={24}/>
+      </div>
+      <form className="settings-grid" onSubmit={saveSettings}>
+        <label><span>Default scoring mode</span><select value={scoringMode} onChange={e=>setScoringMode(e.target.value)}><option value="21">3 × 21 points</option><option value="15">3 × 15 points</option></select><small>{scoringMode==='15'?'Games to 15; win by 2 after 14-all; cap 21.':'Games to 21; win by 2 after 20-all; cap 30.'}</small></label>
+        <div className="settings-option disabled-setting"><div><b>Relay Scoring</b><small>Reserved for a later LESBAD release.</small></div><span className="badge">Coming later</span></div>
+        <div className="settings-option"><div><b>Automatic ranking-point source</b><small>{settings?.ranking_rules_source || 'Awaiting clean LESBAD ranking table upload'}</small></div><span className={Number(settings?.ranking_rules_loaded||0)>0?'badge green':'badge'}>{Number(settings?.ranking_rules_loaded||0)>0 ? settings.ranking_rules_loaded+' rules loaded' : 'Pending'}</span></div>
+        <div className="settings-option"><div><b>Fixed ranking tournaments</b><small>Only tournaments explicitly set to Automatic award ranking points. All other tournaments keep the existing manual Add Points workflow.</small></div><span className="badge green">Protected</span></div>
+        <button className="button" disabled={saving}><CheckCircle2 size={15}/> {saving?'Saving…':'Save Settings'}</button>
+      </form>
+    </div>
+    <div className="panel seed-policy-panel">
+      <span className="eyebrow">SEED BY RANKING</span>
+      <h3>Protected Seeds</h3>
+      <div className="seed-policy-grid">
+        <div><b>8 entrants</b><strong>Top 2</strong></div>
+        <div><b>16 entrants</b><strong>Top 3</strong></div>
+        <div><b>32 entrants</b><strong>Top 4</strong></div>
+        <div><b>64+ entrants</b><strong>Top 8</strong></div>
+      </div>
+      <p>Only entrants actually selected for that draw are considered. Protected players/teams are isolated into different first-round matches; everyone else is randomized.</p>
     </div>
   </section>;
 }

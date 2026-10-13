@@ -2528,3 +2528,116 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   .doubles-records-page .doubles-editor-grid{grid-template-columns:minmax(0,1fr)!important}
 }
 @media(max-width:380px){.mobile-record-details{grid-template-columns:minmax(0,1fr)!important}}
+
+
+/* Independent doubles registration + tournament settings */
+.doubles-player-editor{
+  margin:14px 0;
+  padding:15px;
+  border:1px solid var(--ui-line);
+  border-radius:16px;
+  background:var(--ui-panel2);
+}
+.doubles-player-editor-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+  align-items:end;
+}
+.doubles-player-registry{
+  margin:12px 0 16px;
+  padding:13px;
+  border:1px solid var(--ui-line);
+  border-radius:15px;
+  background:rgba(49,211,154,.035);
+}
+.doubles-registry-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-end;
+  gap:10px;
+  margin-bottom:10px;
+}
+.doubles-registry-head b{display:block}
+.doubles-registry-head small{color:var(--ui-muted)}
+.doubles-player-card-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:8px;
+}
+.doubles-player-card{
+  min-width:0;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:8px;
+  padding:10px;
+  border:1px solid var(--ui-line);
+  border-radius:12px;
+  background:var(--ui-panel);
+}
+.doubles-player-card>div{min-width:0}
+.doubles-player-card b,.doubles-player-card small{display:block;overflow-wrap:anywhere}
+.doubles-player-card small{margin-top:3px;color:var(--ui-muted);font-size:10px}
+.doubles-eligibility-helper{margin:10px 0 0}
+.tournament-mode-strip{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px 12px;
+  margin-top:10px;
+  padding:9px 11px;
+  border:1px solid var(--ui-line);
+  border-radius:12px;
+  background:var(--ui-panel2);
+  font-size:11px;
+}
+.settings-page{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.8fr);gap:14px}
+.settings-panel,.seed-policy-panel{min-width:0}
+.settings-grid{display:grid;gap:12px}
+.settings-grid>label>small{display:block;margin-top:5px;color:var(--ui-muted);font-size:10px}
+.settings-option{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:12px;
+  border:1px solid var(--ui-line);
+  border-radius:12px;
+  background:var(--ui-panel2);
+}
+.settings-option>div{min-width:0}
+.settings-option b,.settings-option small{display:block}
+.settings-option small{margin-top:3px;color:var(--ui-muted);font-size:10px;line-height:1.4}
+.disabled-setting{opacity:.72}
+.seed-policy-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0}
+.seed-policy-grid>div{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:12px;
+  border:1px solid var(--ui-line);
+  border-radius:12px;
+  background:var(--ui-panel2);
+}
+.seed-policy-grid strong{font-size:18px;color:var(--ui-green)}
+.seed-policy-panel p{color:var(--ui-muted);font-size:11px;line-height:1.55}
+:root[data-theme="light"] .doubles-player-editor,
+:root[data-theme="light"] .doubles-player-registry,
+:root[data-theme="light"] .tournament-mode-strip,
+:root[data-theme="light"] .settings-option,
+:root[data-theme="light"] .seed-policy-grid>div{
+  background:linear-gradient(145deg,rgba(255,255,255,.86),rgba(224,236,234,.80));
+  border-color:rgba(128,159,160,.48);
+}
+@media(max-width:1000px){
+  .settings-page{grid-template-columns:1fr}
+  .doubles-player-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .doubles-player-editor-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:650px){
+  .doubles-player-card-grid,.doubles-player-editor-grid,.seed-policy-grid{grid-template-columns:1fr}
+  .records-filter-actions{display:flex;flex-wrap:wrap}
+  .records-filter-actions>*{flex:1 1 160px}
+  .tournament-mode-strip{align-items:flex-start;flex-direction:column}
+}
