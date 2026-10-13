@@ -1661,10 +1661,22 @@ def create_app():
                         (m["tournament_id"],match_id,g.current_user["username"],action,detail,now))
             con.execute("INSERT INTO audit_logs(actor,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
                         (g.current_user["username"],action,"draw_matches",match_id,f"{m['side_a']} vs {m['side_b']} -> {winner or status}",now))
+            ranking_result=None
             if m["tournament_id"]:
                 con.execute("UPDATE tournaments SET status='Live',updated_at=? WHERE id=? AND status!='Completed'",(now,m["tournament_id"]))
+                if completed:
+                    ranking_result=apply_automatic_ranking_points(con,m["tournament_id"],g.current_user["username"])
             con.commit()
-            result={"match_id":match_id,"winner":winner,"games":[{"game_number":n,"side_a_score":a,"side_b_score":b} for n,a,b in games],"games_won":{"side_a":a_wins,"side_b":b_wins},"status":status,"recorded_by":g.current_user["username"],"recorded_at":now}
+            result={
+                "match_id":match_id,
+                "winner":winner,
+                "games":[{"game_number":n,"side_a_score":a,"side_b_score":b} for n,a,b in games],
+                "games_won":{"side_a":a_wins,"side_b":b_wins},
+                "status":status,
+                "recorded_by":g.current_user["username"],
+                "recorded_at":now,
+                "ranking_awards":ranking_result
+            }
         return jsonify(result)
 
     @app.route("/api/tournaments/<int:tournament_id>/executive-draws.pdf")
@@ -2459,79 +2471,153 @@ def _recipient_from_ids(con,event_name,ids_text):
 
 
 def apply_automatic_ranking_points(con,tournament_id,actor="SYSTEM"):
+    """Synchronise automatic ranking awards for every fully completed round.
+
+    Manual tournaments never enter this path. Automatic tournaments award the
+    existing LESBAD placement points as soon as a round is complete. Winners
+    continue forward without receiving a placement award until they are later
+    eliminated or win the final.
+    """
     tournament=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
     if not tournament or str(tournament["ranking_mode"] or "manual").lower()!="automatic":
-        return {"status":"Manual","awarded":0}
+        return {"status":"Manual","awarded":0,"rounds":[]}
+
     rules=_ranking_rule_points(con)
     if not rules:
-        con.execute("UPDATE tournaments SET ranking_award_status='Pending ranking table',ranking_points_awarded=0 WHERE id=?",(tournament_id,))
-        return {"status":"Pending ranking table","awarded":0,"missing_rules":["ALL"]}
+        con.execute("""UPDATE tournaments
+                       SET ranking_award_status='Pending ranking table',ranking_points_awarded=0
+                       WHERE id=?""",(tournament_id,))
+        return {"status":"Pending ranking table","awarded":0,"rounds":[],"missing_rules":["ALL"]}
 
-    rows=con.execute("""SELECT dm.*,UPPER(COALESCE(d.event_name,'MS')) AS event_name,d.stage,d.round_number
-                        FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
-                        WHERE d.tournament_id=? AND dm.status='Completed' AND dm.side_b!='Bye'
-                        ORDER BY d.event_name,d.round_number,dm.match_no,dm.id""",(tournament_id,)).fetchall()
+    rows=[dict(r) for r in con.execute("""SELECT dm.*,UPPER(COALESCE(d.event_name,'MS')) AS event_name,
+                                                d.stage,d.round_number
+                                         FROM draw_matches dm
+                                         JOIN draws d ON d.id=dm.draw_id
+                                         WHERE d.tournament_id=?
+                                         ORDER BY d.event_name,d.round_number,dm.match_no,dm.id""",
+                                      (tournament_id,)).fetchall()]
+    grouped={}
+    for row in rows:
+        key=(row["event_name"],int(row.get("round_number") or 1),str(row.get("stage") or "Round"))
+        grouped.setdefault(key,[]).append(row)
+
     plan={}
     required=set()
-    for m in rows:
-        event=m["event_name"]
-        winner_ids=m["side_a_player_ids"] if m["winner"]==m["side_a"] else m["side_b_player_ids"]
-        loser_ids=m["side_b_player_ids"] if m["winner"]==m["side_a"] else m["side_a_player_ids"]
-        if str(m["stage"] or "").upper()=="FINAL" and int(m["match_no"] or 0)!=3:
-            win_rec=_recipient_from_ids(con,event,winner_ids)
-            lose_rec=_recipient_from_ids(con,event,loser_ids)
-            if win_rec:
-                plan[(event,*win_rec)]=("CHAMPION",)
-                required.add("CHAMPION")
-            if lose_rec:
-                plan[(event,*lose_rec)]=("RUNNER_UP",)
-                required.add("RUNNER_UP")
-        elif not (str(m["stage"] or "").upper()=="FINAL" and int(m["match_no"] or 0)==3):
-            placement=_placement_for_stage(m["stage"])
-            lose_rec=_recipient_from_ids(con,event,loser_ids)
-            if placement and lose_rec and (event,*lose_rec) not in plan:
-                plan[(event,*lose_rec)]=(placement,)
-                required.add(placement)
+    completed_rounds=[]
+    waiting_rounds=[]
+    for (event,round_number,stage),matches in sorted(grouped.items(),key=lambda item:(item[0][0],item[0][1])):
+        real_matches=[m for m in matches if m.get("side_b")!="Bye"]
+        if not real_matches:
+            continue
+        if not all(str(m.get("status") or "")=="Completed" and m.get("winner") for m in real_matches):
+            waiting_rounds.append(f"{event} {stage}")
+            continue
+
+        completed_rounds.append(f"{event} {stage}")
+        for m in real_matches:
+            # A separately scheduled third-place match does not change the
+            # finalist/champion award path.
+            if str(stage).upper()=="FINAL" and int(m.get("match_no") or 0)==3:
+                continue
+
+            winner_ids=m.get("side_a_player_ids") if m.get("winner")==m.get("side_a") else m.get("side_b_player_ids")
+            loser_ids=m.get("side_b_player_ids") if m.get("winner")==m.get("side_a") else m.get("side_a_player_ids")
+
+            if str(stage).upper()=="FINAL":
+                win_rec=_recipient_from_ids(con,event,winner_ids)
+                lose_rec=_recipient_from_ids(con,event,loser_ids)
+                if win_rec:
+                    plan[(event,*win_rec)]="CHAMPION"
+                    required.add("CHAMPION")
+                if lose_rec:
+                    plan[(event,*lose_rec)]="RUNNER_UP"
+                    required.add("RUNNER_UP")
+            else:
+                placement=_placement_for_stage(stage)
+                lose_rec=_recipient_from_ids(con,event,loser_ids)
+                if placement and lose_rec:
+                    plan[(event,*lose_rec)]=placement
+                    required.add(placement)
+
+    if not completed_rounds:
+        status="Waiting for round completion"
+        con.execute("UPDATE tournaments SET ranking_award_status=? WHERE id=?",(status,tournament_id))
+        return {"status":status,"awarded":0,"rounds":[],"waiting_rounds":waiting_rounds}
 
     missing=sorted(code for code in required if code not in rules)
     if missing:
+        status="Pending ranking rules: "+", ".join(missing)
         con.execute("UPDATE tournaments SET ranking_award_status=?,ranking_points_awarded=0 WHERE id=?",
-                    ("Pending ranking rules: "+", ".join(missing),tournament_id))
-        return {"status":"Pending ranking rules","awarded":0,"missing_rules":missing}
+                    (status,tournament_id))
+        return {"status":status,"awarded":0,"rounds":completed_rounds,"missing_rules":missing}
 
     now=now_iso()
     total_delta=0.0
-    award_count=0
-    for (event,recipient_type,recipient_id),(placement,) in plan.items():
+    changed_count=0
+    synced_count=0
+
+    for (event,recipient_type,recipient_id),placement in plan.items():
         points=float(rules[placement])
         existing=con.execute("""SELECT * FROM ranking_awards
                                 WHERE tournament_id=? AND event_name=? AND recipient_type=? AND recipient_id=?""",
                              (tournament_id,event,recipient_type,recipient_id)).fetchone()
         old=float(existing["points"] or 0) if existing else 0.0
         delta=points-old
+
         if abs(delta)>1e-9:
             if recipient_type=="player":
-                con.execute("UPDATE players SET total_points=COALESCE(total_points,0)+?,tournaments_played=COALESCE(tournaments_played,0)+?,updated_at=? WHERE id=?",
+                con.execute("""UPDATE players
+                               SET total_points=COALESCE(total_points,0)+?,
+                                   tournaments_played=COALESCE(tournaments_played,0)+?,
+                                   updated_at=?
+                               WHERE id=?""",
                             (delta,0 if existing else 1,now,recipient_id))
             else:
-                con.execute("UPDATE doubles_teams SET total_points=COALESCE(total_points,0)+?,updated_at=? WHERE id=?",
+                con.execute("""UPDATE doubles_teams
+                               SET total_points=COALESCE(total_points,0)+?,updated_at=?
+                               WHERE id=?""",
                             (delta,now,recipient_id))
             total_delta+=delta
+            changed_count+=1
+
         if existing:
-            con.execute("""UPDATE ranking_awards SET placement_code=?,points=?,updated_at=?
+            con.execute("""UPDATE ranking_awards
+                           SET placement_code=?,points=?,updated_at=?
                            WHERE id=?""",(placement,points,now,existing["id"]))
         else:
-            con.execute("""INSERT INTO ranking_awards(tournament_id,event_name,recipient_type,recipient_id,placement_code,points,created_at,updated_at)
-                           VALUES(?,?,?,?,?,?,?,?)""",
+            con.execute("""INSERT INTO ranking_awards(
+                               tournament_id,event_name,recipient_type,recipient_id,
+                               placement_code,points,created_at,updated_at
+                           ) VALUES(?,?,?,?,?,?,?,?)""",
                         (tournament_id,event,recipient_type,recipient_id,placement,points,now,now))
-        award_count+=1
+        synced_count+=1
 
-    con.execute("UPDATE tournaments SET ranking_award_status='Awarded',ranking_points_awarded=1 WHERE id=?",(tournament_id,))
+    last_round=completed_rounds[-1] if completed_rounds else "completed round"
+    status=("Awarded through "+last_round) if synced_count else ("No placement awards yet · "+last_round)
+    con.execute("""UPDATE tournaments
+                   SET ranking_award_status=?,ranking_points_awarded=?
+                   WHERE id=?""",
+                (status,1 if synced_count else 0,tournament_id))
+
     con.execute("""INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at)
                    VALUES(?,?,?,?,?)""",
-                (tournament_id,actor,"RANKING_POINTS_RECALCULATED",
-                 json.dumps({"awards":award_count,"points_delta":total_delta},separators=(",",":")),now))
-    return {"status":"Awarded","awarded":award_count,"points_delta":total_delta}
+                (tournament_id,actor,"RANKING_POINTS_ROUND_SYNC",
+                 json.dumps({
+                     "completed_rounds":completed_rounds,
+                     "waiting_rounds":waiting_rounds,
+                     "synced_awards":synced_count,
+                     "changed_awards":changed_count,
+                     "points_delta":total_delta
+                 },separators=(",",":")),now))
+
+    return {
+        "status":status,
+        "awarded":synced_count,
+        "changed":changed_count,
+        "points_delta":total_delta,
+        "rounds":completed_rounds,
+        "waiting_rounds":waiting_rounds
+    }
 
 
 def _protected_seed_count(entrant_count):

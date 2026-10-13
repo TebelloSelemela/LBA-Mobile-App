@@ -1906,11 +1906,15 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       const latestDrawStage=latestMatches[0]?.stage || '';
       const nextAlreadyExists=(updated?.matches || []).some(m => (m.event_name || 'MS').toUpperCase() === selectedEvent && Number(m.round_number || 1) > latestRn);
 
+      const rankingState=saved.ranking_awards?.status;
+      const rankingSuffix=detail?.ranking_mode==='automatic' && rankingState
+        ? ' Ranking points: '+rankingState+'.'
+        : '';
       if (latestMatches.length && latestMatches.every(m => m.status === 'Completed') && latestDrawStage !== 'Final' && !nextAlreadyExists) {
         await generateNextRound(true);
-        setMessage('Result completed. The round is finished and the winners have advanced along their fixed bracket paths.');
+        setMessage('Result completed. The round is finished and the winners have advanced along their fixed bracket paths.'+rankingSuffix);
       } else {
-        setMessage(saved.winner+' won the match. Result saved successfully.');
+        setMessage(saved.winner+' won the match. Result saved successfully.'+rankingSuffix);
       }
     } catch (e) {
       setMessage('Result was not saved: '+e.message);
@@ -1986,9 +1990,23 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
         </div>
         <div className="form-row">
           <label><span>Scoring mode</span><select value={form.scoring_mode || '21'} onChange={e=>setForm({...form,scoring_mode:e.target.value})}><option value="21">3 × 21 points</option><option value="15">3 × 15 points</option></select></label>
-          <label><span>Ranking points</span><select value={form.ranking_mode || 'manual'} onChange={e=>setForm({...form,ranking_mode:e.target.value})}><option value="manual">Manual — normal tournament</option><option value="automatic">Automatic — fixed ranking tournament</option></select></label>
+          <div className="tournament-ranking-mode-field">
+            <span className="field-label">Ranking points</span>
+            <div className="ranking-mode-choice-grid">
+              <button type="button" className={(form.ranking_mode || 'manual')==='manual'?'ranking-mode-choice selected':'ranking-mode-choice'} onClick={()=>setForm({...form,ranking_mode:'manual'})}>
+                <span className="ranking-choice-icon"><Plus size={16}/></span>
+                <span><b>Manual Tournament</b><small>Keep the normal Add Points workflow after results.</small></span>
+                <span className="mode-check">{(form.ranking_mode || 'manual')==='manual'?'✓':''}</span>
+              </button>
+              <button type="button" className={form.ranking_mode==='automatic'?'ranking-mode-choice selected automatic':'ranking-mode-choice automatic'} onClick={()=>setForm({...form,ranking_mode:'automatic'})}>
+                <span className="ranking-choice-icon"><Trophy size={16}/></span>
+                <span><b>Fixed Ranking Tournament</b><small>Award LESBAD ranking points automatically after each completed round.</small></span>
+                <span className="mode-check">{form.ranking_mode==='automatic'?'✓':''}</span>
+              </button>
+            </div>
+          </div>
         </div>
-        {form.ranking_mode==='automatic' && <div className="classification-note ranking-mode-note"><Trophy size={15}/><span>This tournament will use the existing LESBAD ranking-points table automatically once that table is loaded. Until then results are saved and awards remain Pending — no guessed points are added.</span></div>}
+        {form.ranking_mode==='automatic' && <div className="classification-note ranking-mode-note"><Trophy size={15}/><span><b>Automatic round awards enabled.</b> When every match in a round is complete, eliminated players/teams receive that round's existing LESBAD points. Until the clean points table is loaded, awards remain Pending and no guessed points are added.</span></div>}
         <button className="button" disabled={busy}><Plus size={16}/> Create Tournament</button>
       </form>}
 
@@ -2365,33 +2383,72 @@ function SettingsPanel({ settings, setSettings, setMessage }) {
     }
   }
 
-  return <section className="settings-page">
-    <div className="panel settings-panel">
-      <div className="section-head">
-        <div><span className="eyebrow">TOURNAMENT SETTINGS</span><h3>Scoring & Ranking</h3><p>Defaults apply to new tournaments. Every tournament keeps the scoring mode it was created with.</p></div>
-        <SettingsIcon size={24}/>
+  return <section className="settings-page settings-dashboard">
+    <div className="panel settings-panel settings-primary-card">
+      <div className="settings-card-head">
+        <div className="settings-card-title">
+          <span className="settings-icon-box"><SettingsIcon size={19}/></span>
+          <div><span className="eyebrow">TOURNAMENT DEFAULTS</span><h3>Scoring & Ranking</h3><p>Defaults affect new tournaments only. Existing tournaments keep their original scoring and ranking mode.</p></div>
+        </div>
       </div>
-      <form className="settings-grid" onSubmit={saveSettings}>
-        <label><span>Default scoring mode</span><select value={scoringMode} onChange={e=>setScoringMode(e.target.value)}><option value="21">3 × 21 points</option><option value="15">3 × 15 points</option></select><small>{scoringMode==='15'?'Games to 15; win by 2 after 14-all; cap 21.':'Games to 21; win by 2 after 20-all; cap 30.'}</small></label>
-        <div className="settings-option disabled-setting"><div><b>Relay Scoring</b><small>Reserved for a later LESBAD release.</small></div><span className="badge">Coming later</span></div>
-        <div className="settings-option"><div><b>Automatic ranking-point source</b><small>{settings?.ranking_rules_source || 'Awaiting clean LESBAD ranking table upload'}</small></div><span className={Number(settings?.ranking_rules_loaded||0)>0?'badge green':'badge'}>{Number(settings?.ranking_rules_loaded||0)>0 ? settings.ranking_rules_loaded+' rules loaded' : 'Pending'}</span></div>
-        <div className="settings-option"><div><b>Fixed ranking tournaments</b><small>Only tournaments explicitly set to Automatic award ranking points. All other tournaments keep the existing manual Add Points workflow.</small></div><span className="badge green">Protected</span></div>
-        <button className="button" disabled={saving}><CheckCircle2 size={15}/> {saving?'Saving…':'Save Settings'}</button>
+
+      <form className="settings-grid professional-settings-grid" onSubmit={saveSettings}>
+        <div className="settings-block settings-scoring-block">
+          <div className="settings-block-head"><div><b>Default scoring mode</b><small>Choose the starting mode for newly created tournaments.</small></div><span className="settings-state-pill active">Active</span></div>
+          <div className="scoring-choice-row">
+            <button type="button" className={scoringMode==='21'?'scoring-choice selected':'scoring-choice'} onClick={()=>setScoringMode('21')}><b>3 × 21</b><small>Win by 2 after 20-all · cap 30</small></button>
+            <button type="button" className={scoringMode==='15'?'scoring-choice selected':'scoring-choice'} onClick={()=>setScoringMode('15')}><b>3 × 15</b><small>Win by 2 after 14-all · cap 21</small></button>
+          </div>
+        </div>
+
+        <div className="settings-status-grid">
+          <div className="settings-option professional-setting-row disabled-setting">
+            <span className="setting-row-icon"><Activity size={16}/></span>
+            <div><b>Relay Scoring</b><small>Reserved for a later LESBAD release.</small></div>
+            <span className="settings-state-pill future">Coming later</span>
+          </div>
+          <div className="settings-option professional-setting-row">
+            <span className="setting-row-icon"><Trophy size={16}/></span>
+            <div><b>Ranking points source</b><small>{settings?.ranking_rules_source || 'Awaiting clean LESBAD ranking table upload'}</small></div>
+            <span className={Number(settings?.ranking_rules_loaded||0)>0?'settings-state-pill active':'settings-state-pill pending'}>{Number(settings?.ranking_rules_loaded||0)>0 ? settings.ranking_rules_loaded+' rules' : 'Pending'}</span>
+          </div>
+        </div>
+
+        <div className="automatic-ranking-info">
+          <div className="automatic-ranking-copy"><span className="setting-row-icon"><CheckCircle2 size={16}/></span><div><b>Automatic ranking is selected per tournament</b><small>Choose <strong>Fixed Ranking Tournament</strong> while creating the tournament. Automatic tournaments sync points after each completed round; normal tournaments keep manual Add Points.</small></div></div>
+          <span className="settings-state-pill active">Per tournament</span>
+        </div>
+
+        <div className="settings-actions-row">
+          <small>These settings never convert an existing manual tournament into an automatic ranking tournament.</small>
+          <button className="button" disabled={saving}><CheckCircle2 size={15}/> {saving?'Saving…':'Save Default'}</button>
+        </div>
       </form>
     </div>
-    <div className="panel seed-policy-panel">
-      <span className="eyebrow">SEED BY RANKING</span>
-      <h3>Protected Seeds</h3>
-      <div className="seed-policy-grid">
-        <div><b>8 entrants</b><strong>Top 2</strong></div>
-        <div><b>16 entrants</b><strong>Top 3</strong></div>
-        <div><b>32 entrants</b><strong>Top 4</strong></div>
-        <div><b>64+ entrants</b><strong>Top 8</strong></div>
+
+    <div className="panel seed-policy-panel settings-seed-card">
+      <div className="settings-card-head compact">
+        <div className="settings-card-title">
+          <span className="settings-icon-box"><TrendingUp size={19}/></span>
+          <div><span className="eyebrow">SEED BY RANKING</span><h3>Protected Seeds</h3><p>Protection is calculated from entrants actually selected for the draw.</p></div>
+        </div>
       </div>
-      <p>Only entrants actually selected for that draw are considered. Protected players/teams are isolated into different first-round matches; everyone else is randomized.</p>
+
+      <div className="seed-policy-grid professional-seed-grid">
+        <div><span><small>Draw size</small><b>8 entrants</b></span><strong>Top 2</strong></div>
+        <div><span><small>Draw size</small><b>16 entrants</b></span><strong>Top 3</strong></div>
+        <div><span><small>Draw size</small><b>32 entrants</b></span><strong>Top 4</strong></div>
+        <div><span><small>Draw size</small><b>64+ entrants</b></span><strong>Top 8</strong></div>
+      </div>
+
+      <div className="seed-policy-note">
+        <Shuffle size={17}/>
+        <p>Protected players/teams are placed into different first-round matches. The remaining entrants are randomized, and required byes are allocated without creating Bye-vs-Bye fixtures.</p>
+      </div>
     </div>
   </section>;
 }
+
 
 function Reports() {
   return <section className="panel"><h3>Reports</h3><div className="report-grid"><div><h4>Official Ranking Register</h4><p>Use Export CSV for Excel-ready records.</p></div><div><h4>Tournament Draw Sheet</h4><p>Select attending players, generate a draw, then print the browser page.</p></div><div><h4>Player Activity Summary</h4><p>Use category and status filters to review participation.</p></div></div></section>;
