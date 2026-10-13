@@ -2598,45 +2598,51 @@ def build_fixtures(players, draw_type, doubles_pairs=None, seed_by_rank=False):
         for idx in range(protected):
             fixture_pairs[order[idx]][0]=entrants[idx]
 
-        # Byes go to protected seeds first, then other occupied matches.
+        # Byes go to protected seeds first.
         remaining_byes=bye_count
         for idx in range(protected):
-            if remaining_byes<=0: break
+            if remaining_byes<=0:
+                break
             fixture_pairs[order[idx]][1]={"name":"Bye","ids":""}
             remaining_byes-=1
 
         rest=entrants[protected:]
         random.shuffle(rest)
 
-        # Fill one real opponent into each seeded match before filling empty matches.
+        # If more byes are needed, put one randomized real entrant into an
+        # otherwise-empty match and give that entrant the bye. This is what
+        # keeps 10/20/50-player brackets valid without Bye-vs-Bye fixtures.
+        if remaining_byes:
+            for pair in fixture_pairs:
+                if remaining_byes<=0:
+                    break
+                if pair[0] is None and pair[1] is None and rest:
+                    pair[0]=rest.pop()
+                    pair[1]={"name":"Bye","ids":""}
+                    remaining_byes-=1
+
+        # Protected seeds without a bye receive a randomized opponent.
         for pair in fixture_pairs:
             if pair[0] is not None and pair[1] is None and rest:
                 pair[1]=rest.pop()
 
-        # Any extra byes are assigned to an occupied one-sided match.
-        while remaining_byes>0:
-            placed=False
-            for pair in fixture_pairs:
-                if pair[0] is not None and pair[1] is None:
-                    pair[1]={"name":"Bye","ids":""}
-                    remaining_byes-=1; placed=True
-                    break
-            if not placed:
-                break
-
-        # Fill empty matches with the randomized remainder.
+        # Fill the remaining empty matches with the randomized field.
         for pair in fixture_pairs:
-            if pair[0] is None and rest:
-                pair[0]=rest.pop()
-            if pair[1] is None and rest:
-                pair[1]=rest.pop()
+            if pair[0] is None and pair[1] is None:
+                if rest:
+                    pair[0]=rest.pop()
+                if rest:
+                    pair[1]=rest.pop()
 
-        # Complete any still-open side with a bye, but never create Bye-vs-Bye.
+        # Defensive completion: there must be no empty slot or Bye-vs-Bye.
         for pair in fixture_pairs:
             if pair[0] is None and pair[1] is not None:
-                pair[0]=pair[1]; pair[1]={"name":"Bye","ids":""}
+                pair[0]=pair[1]
+                pair[1]={"name":"Bye","ids":""}
             elif pair[0] is not None and pair[1] is None:
                 pair[1]={"name":"Bye","ids":""}
+            elif pair[0] is None and pair[1] is None:
+                raise ValueError("Could not allocate all entrants into the seeded knockout bracket.")
 
     return [{
         "match_no":i+1,
