@@ -1287,8 +1287,7 @@ def create_app():
         ranking_mode="automatic" if str(data.get("ranking_mode") or "manual").strip().lower()=="automatic" else "manual"
         now=now_iso()
         with db() as con:
-            rule_count=con.execute("SELECT COUNT(*) FROM ranking_point_rules").fetchone()[0]
-            ranking_award_status=("Pending ranking table" if ranking_mode=="automatic" and not rule_count else ("Ready" if ranking_mode=="automatic" else "Manual"))
+            ranking_award_status=("Active" if ranking_mode=="automatic" else "Manual")
             try:
                 cur=con.execute("""
                     INSERT INTO tournaments(tournament_code,name,venue,start_date,end_date,status,description,created_by,created_at,updated_at,scoring_mode,ranking_mode,ranking_award_status,ranking_points_awarded)
@@ -1299,6 +1298,11 @@ def create_app():
             except sqlite3.IntegrityError:
                 return jsonify({"error":"Tournament code already exists"}),409
             tid=cur.lastrowid
+            if ranking_mode=="automatic":
+                try:
+                    _save_tournament_ranking_rules(con,tid,data.get("ranking_rules") or {},now)
+                except ValueError as exc:
+                    return jsonify({"error":str(exc)}),400
             con.execute("INSERT INTO audit_logs(actor,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)",
                         (g.current_user["username"],"CREATE_TOURNAMENT","tournaments",tid,f"{name} ({code})",now))
             con.commit()
@@ -1360,6 +1364,9 @@ def create_app():
                 data["event_podiums"]=json.loads(data.get("event_podiums") or "{}")
             except Exception:
                 data["event_podiums"]={}
+            data["ranking_rules"]={str(r["placement_code"]).upper():float(r["points"] or 0) for r in con.execute(
+                "SELECT placement_code,points FROM tournament_ranking_rules WHERE tournament_id=?",(tournament_id,)
+            ).fetchall()}
             data["server_time"]=now_iso()
             data["timezone"]="Africa/Maseru (SAST, UTC+02:00)"
             data["history"]=[dict(x) for x in history]
@@ -1405,6 +1412,12 @@ def create_app():
                          (data.get("start_date") if data.get("start_date") is not None else t["start_date"]) or "",
                          (data.get("end_date") if data.get("end_date") is not None else t["end_date"]) or "",
                          status,(data.get("description") if data.get("description") is not None else t["description"]) or "",scoring_mode,ranking_mode,now,tournament_id))
+            if ranking_mode=="automatic" and "ranking_rules" in data:
+                try:
+                    _save_tournament_ranking_rules(con,tournament_id,data.get("ranking_rules") or {},now)
+                except ValueError as exc:
+                    return jsonify({"error":str(exc)}),400
+                con.execute("UPDATE tournaments SET ranking_award_status='Active',updated_at=? WHERE id=?",(now,tournament_id))
             con.execute("INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at) VALUES(?,?,?,?,?)",
                         (tournament_id,g.current_user["username"],"TOURNAMENT_UPDATED",f"Status: {status}",now))
             con.commit()
@@ -1551,6 +1564,33 @@ def create_app():
             con.commit()
             row=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
         return jsonify({**dict(row),"event_podiums":event_podiums,"ranking_awards":award_result})
+
+    @app.route("/api/tournaments/<int:tournament_id>/ranking-rules", methods=["GET","PUT"])
+    @require_auth
+    def tournament_ranking_rules(tournament_id):
+        with db() as con:
+            t=con.execute("SELECT * FROM tournaments WHERE id=?",(tournament_id,)).fetchone()
+            if not t:
+                return jsonify({"error":"Tournament not found"}),404
+            if request.method=="GET":
+                rows=con.execute("""SELECT placement_code,points FROM tournament_ranking_rules
+                                    WHERE tournament_id=? ORDER BY placement_code""",(tournament_id,)).fetchall()
+                return jsonify({str(r["placement_code"]).upper():float(r["points"] or 0) for r in rows})
+            if str(t["ranking_mode"] or "manual").lower()!="automatic":
+                return jsonify({"error":"Round points can only be configured for a Fixed Ranking Tournament."}),400
+            data=request.get_json(silent=True) or {}
+            now=now_iso()
+            try:
+                saved=_save_tournament_ranking_rules(con,tournament_id,data.get("ranking_rules") or data,now)
+            except ValueError as exc:
+                return jsonify({"error":str(exc)}),400
+            result=apply_automatic_ranking_points(con,tournament_id,g.current_user["username"])
+            con.execute("""INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at)
+                           VALUES(?,?,?,?,?)""",
+                        (tournament_id,g.current_user["username"],"ROUND_POINTS_UPDATED",
+                         json.dumps(saved,separators=(",",":")),now))
+            con.commit()
+            return jsonify({"ranking_rules":saved,"ranking_awards":result})
 
     @app.route("/api/tournaments/<int:tournament_id>/recalculate-ranking-points", methods=["POST"])
     @require_auth
@@ -2121,6 +2161,15 @@ def ensure_database():
             FOREIGN KEY(tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_ranking_awards_tournament ON ranking_awards(tournament_id,event_name);
+        CREATE TABLE IF NOT EXISTS tournament_ranking_rules (
+            tournament_id INTEGER NOT NULL,
+            placement_code TEXT NOT NULL,
+            points REAL NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(tournament_id,placement_code),
+            FOREIGN KEY(tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_tournament_ranking_rules_tournament ON tournament_ranking_rules(tournament_id);
         INSERT OR IGNORE INTO app_settings(setting_key,setting_value,updated_at) VALUES('default_scoring_mode','21','SYSTEM');
 
         """)
@@ -2438,7 +2487,43 @@ def _player_matches_draw_category(player, selected_category):
     return selected_age!="OPEN" and selected_age==age
 
 
-def _ranking_rule_points(con):
+RANKING_PLACEMENT_CODES=("R128","R64","R32","R16","QUARTERFINALIST","SEMIFINALIST","RUNNER_UP","CHAMPION")
+
+
+def _normalise_ranking_rules(payload):
+    data=payload or {}
+    result={}
+    for code in RANKING_PLACEMENT_CODES:
+        raw=data.get(code)
+        if raw is None or raw=="":
+            continue
+        try:
+            points=float(raw)
+        except (TypeError,ValueError):
+            raise ValueError(f"{code} points must be numeric.")
+        if points<0:
+            raise ValueError(f"{code} points cannot be negative.")
+        result[code]=points
+    return result
+
+
+def _save_tournament_ranking_rules(con,tournament_id,payload,now):
+    rules=_normalise_ranking_rules(payload)
+    for code,points in rules.items():
+        con.execute("""INSERT INTO tournament_ranking_rules(tournament_id,placement_code,points,updated_at)
+                       VALUES(?,?,?,?)
+                       ON CONFLICT(tournament_id,placement_code)
+                       DO UPDATE SET points=excluded.points,updated_at=excluded.updated_at""",
+                    (tournament_id,code,points,now))
+    return rules
+
+
+def _ranking_rule_points(con,tournament_id=None):
+    if tournament_id:
+        rows=con.execute("""SELECT placement_code,points FROM tournament_ranking_rules
+                            WHERE tournament_id=?""",(tournament_id,)).fetchall()
+        if rows:
+            return {str(r["placement_code"]).upper():float(r["points"] or 0) for r in rows}
     return {str(r["placement_code"]).upper():float(r["points"] or 0) for r in con.execute("SELECT placement_code,points FROM ranking_point_rules").fetchall()}
 
 
@@ -2482,12 +2567,12 @@ def apply_automatic_ranking_points(con,tournament_id,actor="SYSTEM"):
     if not tournament or str(tournament["ranking_mode"] or "manual").lower()!="automatic":
         return {"status":"Manual","awarded":0,"rounds":[]}
 
-    rules=_ranking_rule_points(con)
+    rules=_ranking_rule_points(con,tournament_id)
     if not rules:
+        rules={code:0.0 for code in RANKING_PLACEMENT_CODES}
         con.execute("""UPDATE tournaments
-                       SET ranking_award_status='Pending ranking table',ranking_points_awarded=0
+                       SET ranking_award_status='Active · configure round points',ranking_points_awarded=0
                        WHERE id=?""",(tournament_id,))
-        return {"status":"Pending ranking table","awarded":0,"rounds":[],"missing_rules":["ALL"]}
 
     rows=[dict(r) for r in con.execute("""SELECT dm.*,UPPER(COALESCE(d.event_name,'MS')) AS event_name,
                                                 d.stage,d.round_number
@@ -2545,11 +2630,8 @@ def apply_automatic_ranking_points(con,tournament_id,actor="SYSTEM"):
         return {"status":status,"awarded":0,"rounds":[],"waiting_rounds":waiting_rounds}
 
     missing=sorted(code for code in required if code not in rules)
-    if missing:
-        status="Pending ranking rules: "+", ".join(missing)
-        con.execute("UPDATE tournaments SET ranking_award_status=?,ranking_points_awarded=0 WHERE id=?",
-                    (status,tournament_id))
-        return {"status":status,"awarded":0,"rounds":completed_rounds,"missing_rules":missing}
+    for code in missing:
+        rules[code]=0.0
 
     now=now_iso()
     total_delta=0.0
