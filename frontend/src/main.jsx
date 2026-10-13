@@ -159,7 +159,7 @@ function App() {
   const [players, setPlayers] = useState([]);
   const [draws, setDraws] = useState([]);
   const [tournaments, setTournaments] = useState([]);
-  const [appSettings, setAppSettings] = useState({default_scoring_mode:'21',scoring_modes:[],ranking_rules_loaded:0,ranking_rules_source:'Awaiting clean LESBAD ranking table upload'});
+  const [appSettings, setAppSettings] = useState({default_scoring_mode:'21',scoring_modes:[],ranking_rules_loaded:0,ranking_source_active:true,ranking_rules_source:'Existing LESBAD rankings + fixed-tournament round points'});
   const [form, setForm] = useState(emptyForm());
   const [filters, setFilters] = useState({ q: '', category: 'All', status: 'All' });
   const [pointInputs, setPointInputs] = useState({});
@@ -2094,16 +2094,16 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       {!detail ? <div className="empty"><Trophy size={32}/><h3>Select a tournament</h3><p>Create a tournament on the left, then generate Round 1 and enter results here.</p></div> :
       <>
         <div className="tournament-overview-head">
-          <div className="tournament-title-row">
+          <div className="tournament-title-row tournament-title-full">
             <div className="tournament-title-copy">
               <span className="eyebrow">{detail.tournament_code}</span>
               <h3>{detail.name}</h3>
             </div>
-            <div className="quick-actions tournament-report-actions">
-              <button className="button" onClick={()=>exportFile('/tournaments/'+detail.id+'/executive-draws.pdf',detail.tournament_code+'_Executive_Draw_Pack.pdf')}><FileText size={16}/> Executive Draw Pack</button>
-              <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/export.xlsx',detail.tournament_code+'_tournament.xlsx')}><Download size={16}/> Results Excel</button>
-              <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/scoresheets.pdf',detail.tournament_code+'_scoresheets.pdf')}><ClipboardList size={16}/> Match Scoresheets</button>
-            </div>
+          </div>
+          <div className="quick-actions tournament-report-actions tournament-report-toolbar">
+            <button className="button" onClick={()=>exportFile('/tournaments/'+detail.id+'/executive-draws.pdf',detail.tournament_code+'_Executive_Draw_Pack.pdf')}><FileText size={15}/> Executive Draw Pack</button>
+            <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/export.xlsx',detail.tournament_code+'_tournament.xlsx')}><Download size={15}/> Results Excel</button>
+            <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/scoresheets.pdf',detail.tournament_code+'_scoresheets.pdf')}><ClipboardList size={15}/> Match Scoresheets</button>
           </div>
           <div className="tournament-meta-strip">
             <div><small>Venue</small><b>{detail.venue || 'Not set'}</b></div>
@@ -2114,6 +2114,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           <div className="tournament-mode-strip">
             <span><b>Scoring:</b> {detail.scoring_mode==='15'?'3 × 15':'3 × 21'}</span>
             <span className={detail.ranking_mode==='automatic'?'badge green':'badge'}>{detail.ranking_mode==='automatic'?'Automatic Points':'Manual Points'}</span>
+            {detail.ranking_mode==='automatic' && <span className="badge green ranking-source-live">Source Active</span>}
             {detail.ranking_mode==='automatic' && <button type="button" className="mini" onClick={()=>setShowRoundPoints(v=>!v)}>{showRoundPoints?'Close':'Edit Round Points'}</button>}
           </div>
           {detail.ranking_mode==='automatic' && showRoundPoints && <div className="round-points-editor">
@@ -2458,8 +2459,8 @@ function SettingsPanel({ settings, setSettings, setMessage }) {
           </div>
           <div className="settings-option professional-setting-row">
             <span className="setting-row-icon"><Trophy size={16}/></span>
-            <div><b>Ranking points source</b><small>{settings?.ranking_rules_source || 'Awaiting clean LESBAD ranking table upload'}</small></div>
-            <span className={Number(settings?.ranking_rules_loaded||0)>0?'settings-state-pill active':'settings-state-pill pending'}>{Number(settings?.ranking_rules_loaded||0)>0 ? settings.ranking_rules_loaded+' rules' : 'Pending'}</span>
+            <div><b>Ranking Points Source</b><small>{settings?.ranking_rules_source || 'Existing LESBAD rankings + fixed-tournament round points'}</small></div>
+            <span className={settings?.ranking_source_active!==false?'settings-state-pill active':'settings-state-pill pending'}>{settings?.ranking_source_active!==false ? 'Active' : 'Pending'}</span>
           </div>
         </div>
 

@@ -740,7 +740,11 @@ def create_app():
         with db() as con:
             rows=con.execute("SELECT setting_key,setting_value FROM app_settings").fetchall()
             values={row["setting_key"]:row["setting_value"] for row in rows}
-            rule_count=con.execute("SELECT COUNT(*) FROM ranking_point_rules").fetchone()[0]
+            global_rule_count=con.execute("SELECT COUNT(*) FROM ranking_point_rules").fetchone()[0]
+            tournament_rule_count=con.execute("SELECT COUNT(*) FROM tournament_ranking_rules").fetchone()[0]
+            ranked_player_count=con.execute("""SELECT COUNT(*) FROM players
+                                               WHERE COALESCE(total_points,0)>0 OR COALESCE(rank_position,0)>0""").fetchone()[0]
+            source_active=bool(global_rule_count or tournament_rule_count or ranked_player_count)
         return jsonify({
             "default_scoring_mode": values.get("default_scoring_mode","21"),
             "scoring_modes": [
@@ -748,8 +752,13 @@ def create_app():
                 {"id":"15","label":"3 × 15 points","available":True},
                 {"id":"relay","label":"Relay Scoring","available":False}
             ],
-            "ranking_rules_loaded": int(rule_count or 0),
-            "ranking_rules_source": "Existing LESBAD ranking table" if rule_count else "Awaiting clean LESBAD ranking table upload"
+            "ranking_rules_loaded": int(tournament_rule_count or global_rule_count or 0),
+            "ranking_source_active": source_active,
+            "ranking_rules_source": (
+                "Existing LESBAD rankings + fixed-tournament round points"
+                if source_active else
+                "No ranking records loaded"
+            )
         })
 
     @app.route("/api/settings", methods=["PUT"])

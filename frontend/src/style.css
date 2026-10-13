@@ -2878,3 +2878,51 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   border-color:rgba(128,159,160,.45);
 }
 @media(max-width:1100px){.round-points-grid.edit{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+
+/* Tournament header: give tournament identity the full width before actions */
+.tournament-title-full{
+  display:block!important;
+  width:100%;
+}
+.tournament-title-full .tournament-title-copy{
+  width:100%;
+  max-width:none;
+  min-width:0;
+}
+.tournament-title-full .tournament-title-copy h3{
+  margin:3px 0 0;
+  max-width:100%;
+  font-size:clamp(22px,2.3vw,34px);
+  line-height:1.05;
+  overflow-wrap:normal;
+  word-break:normal;
+  white-space:normal;
+}
+.tournament-title-full .eyebrow{
+  display:block;
+  max-width:100%;
+  overflow-wrap:anywhere;
+}
+.tournament-report-toolbar{
+  justify-content:flex-start!important;
+  width:100%!important;
+  margin-top:-2px;
+  padding-bottom:2px;
+}
+.tournament-report-toolbar .button{
+  min-height:36px!important;
+  padding:8px 11px!important;
+  font-size:10px!important;
+}
+.ranking-source-live{
+  margin-left:auto;
+}
+@media(min-width:1100px){
+  .tournament-meta-strip{
+    grid-template-columns:1.15fr 1fr .72fr 1.35fr!important;
+  }
+}
+@media(max-width:760px){
+  .ranking-source-live{margin-left:0}
+}
