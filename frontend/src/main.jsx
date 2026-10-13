@@ -1357,7 +1357,7 @@ function Draws({ draws, drawForm, setDrawForm, generateDraw, categoryOptions, dr
   function changeCategory(value) {
     setDrawForm(current => ({ ...current, category_code: value, player_ids: [] }));
   }
-  return <section className="grid two"><div className="panel"><h3>Generate Random Draw</h3><form onSubmit={generateDraw} className="form"><Input label="Draw title" value={drawForm.title} onChange={v => setDrawForm({ ...drawForm, title: v })}/><label><span>Category</span><select value={drawForm.category_code} onChange={e => changeCategory(e.target.value)}>{categoryOptions.map(c => <option key={c}>{c}</option>)}</select></label><label><span>Draw type</span><select value={drawForm.draw_type} onChange={e => setDrawForm({ ...drawForm, draw_type: e.target.value })}><option>Singles</option><option>Doubles</option></select></label><label className="check"><input type="checkbox" checked={drawForm.seed_by_rank} onChange={e => setDrawForm({ ...drawForm, seed_by_rank: e.target.checked })}/> Seed by ranking instead of full random shuffle</label><div className="participant-head"><b>Attending players</b><span>{selectedSet.size} selected</span></div><div className="participant-actions"><button type="button" className="mini" onClick={selectAllVisible}>Select all shown</button><button type="button" className="mini" onClick={clearSelection}>Clear</button></div><div className="participant-list">{drawCandidates.length ? drawCandidates.map(player => <label className="participant" key={player.id}><input type="checkbox" checked={selectedSet.has(player.id)} onChange={() => togglePlayer(player.id)} /><span><b>{player.full_name}</b><small>{player.category_code} · Rank #{player.rank_position || '-'} · {player.total_points} pts</small></span></label>) : <div className="empty small">No active players found in this category.</div>}</div><button className="button"><Shuffle size={16}/> Generate Draw From Selected</button></form><h3>Saved Draws</h3><div className="draw-list">{draws.map(d => <button key={d.id} onClick={() => setSelected(d)} className="draw-item"><b>{d.title}</b><small>{d.category_code} · {d.draw_type} · {d.created_at}</small></button>)}</div></div><div className="panel wide"><h3>{selected?.title || 'Latest Draw'}</h3>{(selected || draws[0]) ? <DrawMatches draw={selected || draws[0]} /> : <div className="empty">No draw yet. Select attending players and generate one from the left panel.</div>}</div></section>;
+  return <section className="grid two"><div className="panel"><h3>Generate Random Draw</h3><form onSubmit={generateDraw} className="form"><Input label="Draw title" value={drawForm.title} onChange={v => setDrawForm({ ...drawForm, title: v })}/><label><span>Category</span><select value={drawForm.category_code} onChange={e => changeCategory(e.target.value)}>{categoryOptions.map(c => <option key={c}>{c}</option>)}</select></label><label><span>Draw type</span><select value={drawForm.draw_type} onChange={e => setDrawForm({ ...drawForm, draw_type: e.target.value })}><option>Singles</option><option>Doubles</option></select></label><label className="check"><input type="checkbox" checked={drawForm.seed_by_rank} onChange={e => setDrawForm({ ...drawForm, seed_by_rank: e.target.checked })}/> Seed By Ranking</label><div className="participant-head"><b>Attending players</b><span>{selectedSet.size} selected</span></div><div className="participant-actions"><button type="button" className="mini" onClick={selectAllVisible}>Select all shown</button><button type="button" className="mini" onClick={clearSelection}>Clear</button></div><div className="participant-list">{drawCandidates.length ? drawCandidates.map(player => <label className="participant" key={player.id}><input type="checkbox" checked={selectedSet.has(player.id)} onChange={() => togglePlayer(player.id)} /><span><b>{player.full_name}</b><small>{player.category_code} · Rank #{player.rank_position || '-'} · {player.total_points} pts</small></span></label>) : <div className="empty small">No active players found in this category.</div>}</div><button className="button"><Shuffle size={16}/> Generate Draw From Selected</button></form><h3>Saved Draws</h3><div className="draw-list">{draws.map(d => <button key={d.id} onClick={() => setSelected(d)} className="draw-item"><b>{d.title}</b><small>{d.category_code} · {d.draw_type} · {d.created_at}</small></button>)}</div></div><div className="panel wide"><h3>{selected?.title || 'Latest Draw'}</h3>{(selected || draws[0]) ? <DrawMatches draw={selected || draws[0]} /> : <div className="empty">No draw yet. Select attending players and generate one from the left panel.</div>}</div></section>;
 }
 
 function DrawMatches({ draw }) {
@@ -1422,7 +1422,9 @@ function formatLbaTime(value) {
 function TournamentScreen({ tournaments, players, categoryOptions, refresh, setMessage, appSettings }) {
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
-  const [form, setForm] = useState({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft',scoring_mode:appSettings?.default_scoring_mode || '21',ranking_mode:'manual'});
+  const [form, setForm] = useState({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft',scoring_mode:appSettings?.default_scoring_mode || '21',ranking_mode:'manual',ranking_rules:{R128:'0',R64:'0',R32:'0',R16:'0',QUARTERFINALIST:'0',SEMIFINALIST:'0',RUNNER_UP:'0',CHAMPION:'0'}});
+  const [roundPoints, setRoundPoints] = useState({R128:'0',R64:'0',R32:'0',R16:'0',QUARTERFINALIST:'0',SEMIFINALIST:'0',RUNNER_UP:'0',CHAMPION:'0'});
+  const [showRoundPoints, setShowRoundPoints] = useState(false);
   const [draw, setDraw] = useState({title:'Tournament Draw',category_code:'All',draw_type:'Singles',event_name:'MS',seed_by_rank:false,player_ids:[]});
   const [selectedEvent, setSelectedEvent] = useState('MS');
   const [openResult, setOpenResult] = useState(null);
@@ -1456,6 +1458,13 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
 
   useEffect(() => { if (!selectedId && activeTournaments.length) setSelectedId(activeTournaments[0].id); }, [activeTournaments, selectedId]);
   useEffect(() => { if (selectedId) load(selectedId); }, [selectedId]);
+  useEffect(() => {
+    if (!detail?.id) return;
+    const current={...{R128:'0',R64:'0',R32:'0',R16:'0',QUARTERFINALIST:'0',SEMIFINALIST:'0',RUNNER_UP:'0',CHAMPION:'0'},...(detail.ranking_rules || {})};
+    Object.keys(current).forEach(k=>{ current[k]=String(current[k] ?? '0'); });
+    setRoundPoints(current);
+    setShowRoundPoints(false);
+  }, [detail?.id, JSON.stringify(detail?.ranking_rules || {})]);
   useEffect(() => {
     let cancelled=false;
     api('/players?category=All&status=Active&scope=all')
@@ -1759,7 +1768,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     setBusy(true);
     try {
       const t = await api('/tournaments', {method:'POST', body:JSON.stringify(form)});
-      setForm({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft',scoring_mode:appSettings?.default_scoring_mode || '21',ranking_mode:'manual'});
+      setForm({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft',scoring_mode:appSettings?.default_scoring_mode || '21',ranking_mode:'manual',ranking_rules:{R128:'0',R64:'0',R32:'0',R16:'0',QUARTERFINALIST:'0',SEMIFINALIST:'0',RUNNER_UP:'0',CHAMPION:'0'}});
       await refresh();
       setSelectedId(t.id);
       setShowCreate(false);
@@ -1942,6 +1951,22 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       setMessage('Tournament finished. Champion: '+(result.winner_name || 'recorded')+'.'+rankingNote);
     } catch (e) { setMessage(e.message); }
     finally { setBusy(false); }
+  }
+
+  async function saveRoundPoints() {
+    if (!selectedId) return;
+    setBusy(true);
+    try {
+      await api('/tournaments/'+selectedId+'/ranking-rules',{method:'PUT',body:JSON.stringify({ranking_rules:roundPoints})});
+      await load(selectedId);
+      await refresh();
+      setShowRoundPoints(false);
+      setMessage('Round points saved. Existing automatic awards were recalculated.');
+    } catch (e) {
+      setMessage(e.message || 'Could not save round points.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function recalculateRankingPoints() {
@@ -2134,7 +2159,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
                 <option value="XD">XD — Mixed Doubles</option>
               </select></label>
               <label><span>{isDoublesEvent ? 'Doubles Category / Age' : 'Category / Age'}</span><select value={draw.category_code} onChange={e=>{setDoublesPairs([{a:'',b:''}]);setDraw({...draw,category_code:e.target.value,player_ids:[]});}}>{setupCategoryOptions.map(c=><option key={c} value={c}>{c==='All' ? (isDoublesEvent ? 'All eligible ages' : 'All') : c}</option>)}</select></label>
-              <label className="check setup-seed"><input type="checkbox" checked={draw.seed_by_rank} onChange={e=>setDraw({...draw,seed_by_rank:e.target.checked})}/> Seed by ranking — protect top 2 of 8, top 3 of 16, top 4 of 32, top 8 of 64+</label>
+              <label className="check setup-seed"><input type="checkbox" checked={draw.seed_by_rank} onChange={e=>setDraw({...draw,seed_by_rank:e.target.checked})}/> Seed By Ranking</label>
             </div>
             {!isDoublesEvent ? <>
               <div className="participant-head"><b>Attending players</b><span>{draw.player_ids.length} selected</span></div>
