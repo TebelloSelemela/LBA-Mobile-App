@@ -2016,22 +2016,33 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
         <div className="form-row">
           <label><span>Scoring mode</span><select value={form.scoring_mode || '21'} onChange={e=>setForm({...form,scoring_mode:e.target.value})}><option value="21">3 × 21 points</option><option value="15">3 × 15 points</option></select></label>
           <div className="tournament-ranking-mode-field">
-            <span className="field-label">Ranking points</span>
-            <div className="ranking-mode-choice-grid">
+            <span className="field-label">Ranking Points</span>
+            <div className="ranking-mode-choice-grid compact">
               <button type="button" className={(form.ranking_mode || 'manual')==='manual'?'ranking-mode-choice selected':'ranking-mode-choice'} onClick={()=>setForm({...form,ranking_mode:'manual'})}>
-                <span className="ranking-choice-icon"><Plus size={16}/></span>
-                <span><b>Manual Tournament</b><small>Keep the normal Add Points workflow after results.</small></span>
+                <span className="ranking-choice-icon"><Plus size={15}/></span>
+                <b>Manual</b>
                 <span className="mode-check">{(form.ranking_mode || 'manual')==='manual'?'✓':''}</span>
               </button>
               <button type="button" className={form.ranking_mode==='automatic'?'ranking-mode-choice selected automatic':'ranking-mode-choice automatic'} onClick={()=>setForm({...form,ranking_mode:'automatic'})}>
-                <span className="ranking-choice-icon"><Trophy size={16}/></span>
-                <span><b>Fixed Ranking Tournament</b><small>Award LESBAD ranking points automatically after each completed round.</small></span>
+                <span className="ranking-choice-icon"><Trophy size={15}/></span>
+                <b>Automatic</b>
                 <span className="mode-check">{form.ranking_mode==='automatic'?'✓':''}</span>
               </button>
             </div>
           </div>
         </div>
-        {form.ranking_mode==='automatic' && <div className="classification-note ranking-mode-note"><Trophy size={15}/><span><b>Automatic round awards enabled.</b> When every match in a round is complete, eliminated players/teams receive that round's existing LESBAD points. Until the clean points table is loaded, awards remain Pending and no guessed points are added.</span></div>}
+        {form.ranking_mode==='automatic' && <div className="round-points-create">
+          <div className="round-points-head"><b>Round Points</b><span className="badge green">Auto Capture Active</span></div>
+          <div className="round-points-grid">
+            <label><span>R64</span><input type="number" min="0" step="1" value={form.ranking_rules.R64} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,R64:e.target.value}})}/></label>
+            <label><span>R32</span><input type="number" min="0" step="1" value={form.ranking_rules.R32} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,R32:e.target.value}})}/></label>
+            <label><span>R16</span><input type="number" min="0" step="1" value={form.ranking_rules.R16} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,R16:e.target.value}})}/></label>
+            <label><span>QF</span><input type="number" min="0" step="1" value={form.ranking_rules.QUARTERFINALIST} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,QUARTERFINALIST:e.target.value}})}/></label>
+            <label><span>SF</span><input type="number" min="0" step="1" value={form.ranking_rules.SEMIFINALIST} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,SEMIFINALIST:e.target.value}})}/></label>
+            <label><span>Runner-up</span><input type="number" min="0" step="1" value={form.ranking_rules.RUNNER_UP} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,RUNNER_UP:e.target.value}})}/></label>
+            <label><span>Champion</span><input type="number" min="0" step="1" value={form.ranking_rules.CHAMPION} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,CHAMPION:e.target.value}})}/></label>
+          </div>
+        </div>}
         <button className="button" disabled={busy}><Plus size={16}/> Create Tournament</button>
       </form>}
 
@@ -2041,7 +2052,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             <button type="button" className="draw-item tournament-select-button" onClick={()=>setSelectedId(t.id)}>
               <b>{t.name}</b>
               <small>{t.tournament_code} · {t.status} · {t.completed_matches || 0}/{t.total_matches || 0} matches complete</small>
-              <small>{t.scoring_mode==='15'?'3×15':'3×21'} · {t.ranking_mode==='automatic'?'Fixed ranking tournament':'Manual ranking points'}</small>
+              <small>{t.scoring_mode==='15'?'3×15':'3×21'} · {t.ranking_mode==='automatic'?'Automatic':'Manual'}</small>
               {t.start_date && <small>{t.start_date}{t.end_date && t.end_date!==t.start_date ? ' → '+t.end_date : ''}</small>}
             </button>
             <button type="button" className="tournament-archive-button" onClick={()=>archiveTournament(t)} title="Archive tournament" aria-label={'Archive '+t.name}><Archive size={15}/></button>
@@ -2102,9 +2113,22 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           </div>
           <div className="tournament-mode-strip">
             <span><b>Scoring:</b> {detail.scoring_mode==='15'?'3 × 15':'3 × 21'}</span>
-            <span className={detail.ranking_mode==='automatic'?'badge green':'badge'}>{detail.ranking_mode==='automatic'?'Fixed ranking tournament':'Manual ranking points'}</span>
-            {detail.ranking_mode==='automatic' && <span><b>Award status:</b> {detail.ranking_award_status || 'Ready'}</span>}
+            <span className={detail.ranking_mode==='automatic'?'badge green':'badge'}>{detail.ranking_mode==='automatic'?'Automatic Points':'Manual Points'}</span>
+            {detail.ranking_mode==='automatic' && <button type="button" className="mini" onClick={()=>setShowRoundPoints(v=>!v)}>{showRoundPoints?'Close':'Edit Round Points'}</button>}
           </div>
+          {detail.ranking_mode==='automatic' && showRoundPoints && <div className="round-points-editor">
+            <div className="round-points-head"><b>Round Points</b><span className="badge green">Auto Capture Active</span></div>
+            <div className="round-points-grid edit">
+              <label><span>R64</span><input type="number" min="0" step="1" value={roundPoints.R64} onChange={e=>setRoundPoints({...roundPoints,R64:e.target.value})}/></label>
+              <label><span>R32</span><input type="number" min="0" step="1" value={roundPoints.R32} onChange={e=>setRoundPoints({...roundPoints,R32:e.target.value})}/></label>
+              <label><span>R16</span><input type="number" min="0" step="1" value={roundPoints.R16} onChange={e=>setRoundPoints({...roundPoints,R16:e.target.value})}/></label>
+              <label><span>QF</span><input type="number" min="0" step="1" value={roundPoints.QUARTERFINALIST} onChange={e=>setRoundPoints({...roundPoints,QUARTERFINALIST:e.target.value})}/></label>
+              <label><span>SF</span><input type="number" min="0" step="1" value={roundPoints.SEMIFINALIST} onChange={e=>setRoundPoints({...roundPoints,SEMIFINALIST:e.target.value})}/></label>
+              <label><span>Runner-up</span><input type="number" min="0" step="1" value={roundPoints.RUNNER_UP} onChange={e=>setRoundPoints({...roundPoints,RUNNER_UP:e.target.value})}/></label>
+              <label><span>Champion</span><input type="number" min="0" step="1" value={roundPoints.CHAMPION} onChange={e=>setRoundPoints({...roundPoints,CHAMPION:e.target.value})}/></label>
+            </div>
+            <div className="round-points-actions"><button type="button" className="button" disabled={busy} onClick={saveRoundPoints}><CheckCircle2 size={14}/> Save Points</button></div>
+          </div>}
         </div>
 
         {(Object.keys(eventPodiums).length || podium.first || podium.second || podium.third) > 0 && <div className="podium-card">
@@ -2147,7 +2171,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
 
         {!eventHasDraw ? <div className="panel">
           <h3>Set up {selectedEvent} Draw</h3>
-          <p className="helper">This tournament can contain separate draws for MS, WS, MD, WD and XD. Select an event below and generate its Round 1 independently.</p>
+          <p className="helper">Create this event draw.</p>
           <form className="form" onSubmit={generateTournamentDraw}>
             <div className="tournament-setup-grid">
               <Input label="Draw title" value={draw.title} onChange={v=>setDraw({...draw,title:v})}/>
@@ -2455,7 +2479,7 @@ function SettingsPanel({ settings, setSettings, setMessage }) {
       <div className="settings-card-head compact">
         <div className="settings-card-title">
           <span className="settings-icon-box"><TrendingUp size={19}/></span>
-          <div><span className="eyebrow">SEED BY RANKING</span><h3>Protected Seeds</h3><p>Protection is calculated from entrants actually selected for the draw.</p></div>
+          <div><span className="eyebrow">DRAW SETTINGS</span><h3>Seed By Ranking</h3></div>
         </div>
       </div>
 
@@ -2466,10 +2490,7 @@ function SettingsPanel({ settings, setSettings, setMessage }) {
         <div><span><small>Draw size</small><b>64+ entrants</b></span><strong>Top 8</strong></div>
       </div>
 
-      <div className="seed-policy-note">
-        <Shuffle size={17}/>
-        <p>Protected players/teams are placed into different first-round matches. The remaining entrants are randomized, and required byes are allocated without creating Bye-vs-Bye fixtures.</p>
-      </div>
+
     </div>
   </section>;
 }
