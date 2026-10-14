@@ -449,7 +449,7 @@ function App() {
       <main className="main">
         <div className="mobile-topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}><Menu size={20}/></button><div><b>LBA ADMIN</b><span>{currentUser?.full_name || "Committee portal"} · {currentUser?.role || "User"}</span></div><div className="secure"><ShieldCheck size={16}/> Secure</div></div>
         {activeTab === "home" && <Overview dashboard={dashboard} players={players} draws={draws} setActiveTab={setActiveTab} exportFile={exportFile}/>} 
-        {activeTab !== "home" && <header className="hero">
+        {activeTab !== "home" && activeTab !== "tournaments" && <header className="hero">
           <div className="hero-copy"><div className="hero-brand"><img src={logo} alt="Lesotho Badminton Association logo" className="hero-logo" /><div><p className="eyebrow">Administration purposes</p><h2>Ranking Records & Random Draw Management</h2></div></div><p>Update records, add latest obtained points, select tournament participants and generate draws only for players who are attending.</p></div>
           <div className="hero-actions">
             <button className="button secondary" onClick={() => exportFile("/players/export.csv","lba_players.csv")}><Download size={16}/> Export CSV</button>
@@ -458,14 +458,14 @@ function App() {
           </div>
         </header>}
 
-        {activeTab !== 'home' && <section className="stats">
+        {activeTab !== 'home' && activeTab !== 'tournaments' && <section className="stats">
           <Stat label="Total Players" value={dashboard?.totalPlayers ?? 0} />
           <Stat label="Active Players" value={dashboard?.activePlayers ?? 0} />
           <Stat label="Categories" value={dashboard?.categories ?? 0} />
           <Stat label="Saved Draws" value={dashboard?.draws ?? 0} />
         </section>}
 
-        <div className="message">{message}</div>
+        <div className={activeTab==='tournaments' ? 'message tournament-message' : 'message'}>{message}</div>
         {activeTab === 'records' && <Records players={players} form={form} setForm={setForm} savePlayer={savePlayer} deletePlayer={deletePlayer} filters={filters} setFilters={setFilters} categoryOptions={categoryOptions} loadAll={loadAll} pointInputs={pointInputs} setPointInputs={setPointInputs} addPoints={addPoints} setMessage={setMessage} />}
         {activeTab === 'draws' && <Draws draws={draws} drawForm={drawForm} setDrawForm={setDrawForm} generateDraw={generateDraw} categoryOptions={categoryOptions} drawCandidates={drawCandidates} />}
         {activeTab === 'tournaments' && <TournamentScreen tournaments={tournaments} players={players} categoryOptions={categoryOptions} refresh={loadAll} setMessage={setMessage} appSettings={appSettings} />}
@@ -1437,7 +1437,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const [tournamentPlayers, setTournamentPlayers] = useState(players);
   const [loadingDoublesTeams, setLoadingDoublesTeams] = useState(false);
   const [bracketZoom, setBracketZoom] = useState(1);
-  const [showCreate, setShowCreate] = useState(tournaments.length === 0);
+  const [showCreate, setShowCreate] = useState(true);
   const [splitPct, setSplitPct] = useState(() => {
     const saved=Number(localStorage.getItem('lba_tournament_split') || 32);
     return Number.isFinite(saved) ? Math.max(24,Math.min(46,saved)) : 32;
@@ -2006,12 +2006,16 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       </div>
 
       {showCreate && <form className="form tournament-create-form" onSubmit={createTournament}>
-        <Input label="Tournament name" value={form.name} onChange={v=>setForm({...form,name:v})}/>
-        <Input label="Tournament code (optional)" value={form.tournament_code} onChange={v=>setForm({...form,tournament_code:v})}/>
-        <Input label="Venue" value={form.venue} onChange={v=>setForm({...form,venue:v})}/>
+        <div className="create-tournament-heading">
+          <span className="create-tournament-icon"><Trophy size={22}/></span>
+          <div><h3>Create Tournament</h3><p>Set up a new badminton tournament</p></div>
+        </div>
+        <Input label="Tournament name *" placeholder="Enter tournament name" value={form.name} onChange={v=>setForm({...form,name:v})}/>
+        <Input label="Tournament code (optional)" placeholder="e.g. OASIS-2026" value={form.tournament_code} onChange={v=>setForm({...form,tournament_code:v})}/>
+        <Input label="Venue *" placeholder="Enter venue name" value={form.venue} onChange={v=>setForm({...form,venue:v})}/>
         <div className="form-row">
-          <Input label="Start date" type="date" value={form.start_date} onChange={v=>setForm({...form,start_date:v})}/>
-          <Input label="End date" type="date" value={form.end_date} onChange={v=>setForm({...form,end_date:v})}/>
+          <Input label="Start date *" type="date" value={form.start_date} onChange={v=>setForm({...form,start_date:v})}/>
+          <Input label="End date *" type="date" value={form.end_date} onChange={v=>setForm({...form,end_date:v})}/>
         </div>
         <div className="form-row">
           <label><span>Scoring mode</span><select value={form.scoring_mode || '21'} onChange={e=>setForm({...form,scoring_mode:e.target.value})}><option value="21">3 × 21 points</option><option value="15">3 × 15 points</option></select></label>
@@ -2019,13 +2023,13 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             <span className="field-label">Ranking Points</span>
             <div className="ranking-mode-choice-grid compact">
               <button type="button" className={(form.ranking_mode || 'manual')==='manual'?'ranking-mode-choice selected':'ranking-mode-choice'} onClick={()=>setForm({...form,ranking_mode:'manual'})}>
-                <span className="ranking-choice-icon"><Plus size={15}/></span>
-                <b>Manual</b>
+                <span className="ranking-choice-icon"><Trophy size={16}/></span>
+                <span className="ranking-choice-copy"><b>Manual</b><small>Manage ranking points manually</small></span>
                 <span className="mode-check">{(form.ranking_mode || 'manual')==='manual'?'✓':''}</span>
               </button>
               <button type="button" className={form.ranking_mode==='automatic'?'ranking-mode-choice selected automatic':'ranking-mode-choice automatic'} onClick={()=>setForm({...form,ranking_mode:'automatic'})}>
-                <span className="ranking-choice-icon"><Trophy size={15}/></span>
-                <b>Automatic</b>
+                <span className="ranking-choice-icon"><Trophy size={16}/></span>
+                <span className="ranking-choice-copy"><b>Automatic</b><small>Auto-calculate ranking points</small></span>
                 <span className="mode-check">{form.ranking_mode==='automatic'?'✓':''}</span>
               </button>
             </div>
@@ -2165,7 +2169,8 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
               const info=eventProgress[event] || {exists:false,total:0,completed:0,live:0};
               const status=!info.exists ? 'Add draw' : (info.total && info.completed===info.total ? 'Complete' : (info.live ? info.completed+'/'+info.total+' · LIVE' : info.completed+'/'+info.total+' done'));
               return <button key={event} type="button" className={selectedEvent===event ? 'event-tab active' : 'event-tab'} onClick={()=>{setSelectedEvent(event);setDoublesPairs([{a:'',b:''}]);setDraw(d=>({...d,event_name:event,draw_type:['MD','WD','XD'].includes(event)?'Doubles':'Singles',category_code:'All',player_ids:[],title:detail.name+' — '+event}));}}>
-                <b>{event}</b><span>{status}</span>
+                <span className="event-tab-copy"><b>{event}</b><span>{status}</span></span>
+                <span className={info.exists && info.total && info.completed===info.total ? 'event-tab-state complete' : 'event-tab-state'}>{info.exists && info.total && info.completed===info.total ? <CheckCircle2 size={16}/> : <Plus size={16}/>}</span>
               </button>;
             })}
           </div>
@@ -2243,8 +2248,8 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           <div className="round-action-bar target-progression-card">
             <div className="progression-copy">
               <span className="progression-icon"><BarChart3 size={22}/></span>
-              <div><b>{selectedEvent} Knockout Progression</b>
-              <small>{latestRound ? 'Latest generated round: '+latestRound.stage+'. ' : ''}Scoring: {detail.scoring_mode==='15'?'3×15 (Best of 3)':'3×21 (Best of 3)'}. Live bracket progression.</small></div>
+              <div><b>{selectedEvent} knockout progression</b>
+              <small>{latestRound ? 'Latest generated round: '+latestRound.stage+'. ' : ''}Scoring: {detail.scoring_mode==='15'?'3×15':'3×21'}. Event: {selectedEvent}. Live; completed winners follow the fixed bracket path.</small></div>
             </div>
             <div className="quick-actions">
               <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/bracket.pdf?event='+encodeURIComponent(selectedEvent),detail.tournament_code+'_'+selectedEvent+'_'+(latestRound?.stage || 'draw').replaceAll(' ','_')+'_draw.pdf')}><FileText size={16}/> Export This Event</button>
