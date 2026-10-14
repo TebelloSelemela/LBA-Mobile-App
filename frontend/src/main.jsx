@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users, Home, Menu, X, Sun, Moon, ShieldCheck, CalendarDays, CheckCircle2, ClipboardList, MonitorPlay, Maximize, Minimize, TrendingUp, Activity, UserRound, BarChart3, Archive, Settings as SettingsIcon, UserPlus } from 'lucide-react';
+import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Trophy, Upload, Users, Home, Menu, X, Sun, Moon, ShieldCheck, CalendarDays, CheckCircle2, ClipboardList, MonitorPlay, Maximize, Minimize, TrendingUp, Activity, UserRound, BarChart3, Archive, Settings as SettingsIcon, UserPlus, MapPin, Clock3 } from 'lucide-react';
 import './style.css';
 import logo from './assets/lba-logo.png';
 
@@ -2106,16 +2106,16 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/scoresheets.pdf',detail.tournament_code+'_scoresheets.pdf')}><ClipboardList size={15}/> Match Scoresheets</button>
           </div>
           <div className="tournament-meta-strip">
-            <div><small>Venue</small><b>{detail.venue || 'Not set'}</b></div>
-            <div><small>Tournament date</small><b>{detail.start_date || 'Not set'}</b></div>
-            <div><small>Status</small><b>{detail.status}</b></div>
-            <div className="tournament-time-meta"><small>System time · Lesotho / SAST</small><b>{formatLbaTime(detail.server_time)}</b><span>UTC+02:00</span></div>
+            <div className="tournament-meta-card"><span className="meta-card-icon"><MapPin size={18}/></span><span><small>Venue</small><b>{detail.venue || 'Not set'}</b></span></div>
+            <div className="tournament-meta-card"><span className="meta-card-icon"><CalendarDays size={18}/></span><span><small>Tournament date</small><b>{detail.start_date || 'Not set'}</b></span></div>
+            <div className="tournament-meta-card"><span className="meta-card-icon status-icon"><span className="status-dot"/></span><span><small>Status</small><b>{detail.status}</b></span></div>
+            <div className="tournament-time-meta tournament-meta-card"><span className="meta-card-icon"><Clock3 size={18}/></span><span><small>System time · Lesotho / SAST</small><b>{formatLbaTime(detail.server_time)}</b><em>UTC+02:00</em></span></div>
           </div>
-          <div className="tournament-mode-strip">
-            <span><b>Scoring:</b> {detail.scoring_mode==='15'?'3 × 15':'3 × 21'}</span>
-            <span className={detail.ranking_mode==='automatic'?'badge green':'badge'}>{detail.ranking_mode==='automatic'?'Automatic Points':'Manual Points'}</span>
-            {detail.ranking_mode==='automatic' && <span className="badge green ranking-source-live">Source Active</span>}
-            {detail.ranking_mode==='automatic' && <button type="button" className="mini" onClick={()=>setShowRoundPoints(v=>!v)}>{showRoundPoints?'Close':'Edit Round Points'}</button>}
+          <div className="tournament-mode-strip target-mode-strip">
+            <span className="scoring-pill"><b>Scoring:</b> {detail.scoring_mode==='15'?'3 × 15':'3 × 21'}</span>
+            <span className={detail.ranking_mode==='automatic'?'mode-pill active':'mode-pill'}>{detail.ranking_mode==='automatic'?'Automatic Points':'Manual Points'}</span>
+            {detail.ranking_mode==='automatic' && <span className="mode-pill active source-pill"><CheckCircle2 size={14}/> Source Active</span>}
+            {detail.ranking_mode==='automatic' && <button type="button" className="mini edit-round-points" onClick={()=>setShowRoundPoints(v=>!v)}><SettingsIcon size={14}/>{showRoundPoints?'Close':'Edit Round Points'}</button>}
           </div>
           {detail.ranking_mode==='automatic' && showRoundPoints && <div className="round-points-editor">
             <div className="round-points-head"><b>Round Points</b><span className="badge green">Auto Capture Active</span></div>
@@ -2147,17 +2147,18 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
         </div>}
 
         <div className="stats tournament-event-stats">
-          <Stat label={selectedEvent+" Rounds"} value={rounds.length}/>
-          <Stat label={selectedEvent+" Matches"} value={selectedEventMatches.length}/>
-          <Stat label="Completed" value={selectedEventMatches.filter(m=>m.status==='Completed').length}/>
-          <Stat label="Pending / Live" value={selectedEventMatches.filter(m=>m.status!=='Completed').length}/>
+          <Stat icon={<BarChart3 size={19}/>} label={selectedEvent+" Rounds"} value={rounds.length}/>
+          <Stat icon={<Users size={19}/>} label={selectedEvent+" Matches"} value={selectedEventMatches.length}/>
+          <Stat icon={<CheckCircle2 size={19}/>} label="Completed" value={selectedEventMatches.filter(m=>m.status==='Completed').length}/>
+          <Stat icon={<Clock3 size={19}/>} label="Pending / Live" value={selectedEventMatches.filter(m=>m.status!=='Completed').length}/>
         </div>
 
-        <div className="tournament-event-bar">
-          <div>
-            <span className="eyebrow">EVENT DRAWS</span>
+        <div className="tournament-event-bar target-event-draws">
+          <div className="event-draw-copy">
+            <span className="event-draw-icon"><Shuffle size={20}/></span>
+            <div><span className="eyebrow">EVENT DRAWS</span>
             <b>One tournament · multiple independent draws</b>
-            <small>Create and run MS, WS, MD, WD and XD under the same tournament record.</small>
+            <small>Create and run MS, WS, MD, WD and XD under the same tournament record.</small></div>
           </div>
           <div className="event-tabs">
             {eventOptions.map(event => {
@@ -2239,10 +2240,11 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             <button className="button" disabled={busy || (isDoublesEvent && completeDoublesPairs.length<2)}><Shuffle size={16}/> Generate {isDoublesEvent ? selectedEvent+' Round 1 — '+completeDoublesPairs.length+' Teams' : 'Round 1 Draw'}</button>
           </form>
         </div> : <div className="panel round-workspace">
-          <div className="round-action-bar">
-            <div>
-              <b>{selectedEvent} knockout progression</b>
-              <small>{latestRound ? 'Latest generated round: '+latestRound.stage+'. ' : ''}Scoring: {detail.scoring_mode==='15'?'3×15':'3×21'}. Record results live; completed winners follow the fixed bracket path.</small>
+          <div className="round-action-bar target-progression-card">
+            <div className="progression-copy">
+              <span className="progression-icon"><BarChart3 size={22}/></span>
+              <div><b>{selectedEvent} Knockout Progression</b>
+              <small>{latestRound ? 'Latest generated round: '+latestRound.stage+'. ' : ''}Scoring: {detail.scoring_mode==='15'?'3×15 (Best of 3)':'3×21 (Best of 3)'}. Live bracket progression.</small></div>
             </div>
             <div className="quick-actions">
               <button className="button secondary" onClick={()=>exportFile('/tournaments/'+detail.id+'/bracket.pdf?event='+encodeURIComponent(selectedEvent),detail.tournament_code+'_'+selectedEvent+'_'+(latestRound?.stage || 'draw').replaceAll(' ','_')+'_draw.pdf')}><FileText size={16}/> Export This Event</button>
@@ -2501,7 +2503,7 @@ function Reports() {
   return <section className="panel"><h3>Reports</h3><div className="report-grid"><div><h4>Official Ranking Register</h4><p>Use Export CSV for Excel-ready records.</p></div><div><h4>Tournament Draw Sheet</h4><p>Select attending players, generate a draw, then print the browser page.</p></div><div><h4>Player Activity Summary</h4><p>Use category and status filters to review participation.</p></div></div></section>;
 }
 
-function Stat({ label, value }) { return <div className="stat"><span>{label}</span><b>{value}</b></div>; }
+function Stat({ label, value, icon=null }) { return <div className="stat">{icon&&<span className="stat-icon">{icon}</span>}<span className="stat-copy"><span>{label}</span><b>{value}</b></span></div>; }
 function Input({ label, value, onChange=()=>{}, type = 'text', min, max, step, inputMode, readOnly=false, placeholder='' }) { return <label><span>{label}</span><input type={type} min={min} max={max} step={step} inputMode={inputMode} value={value ?? ''} readOnly={readOnly} placeholder={placeholder} className={readOnly?'readonly-input':''} onChange={e => onChange(e.target.value)} /></label>; }
 
 createRoot(document.getElementById('root')).render(<App />);
