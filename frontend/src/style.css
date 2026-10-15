@@ -5218,3 +5218,52 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   text-rendering:optimizeLegibility;
   -webkit-font-smoothing:antialiased;
 }
+
+
+/* =======================================================================
+   LESBAD tournament full-width bracket v1.0.15
+   Use the empty space below the left tournament pane without touching
+   tournament data, bracket generation, scoring, or zoom interactions.
+   ======================================================================= */
+@media (min-width:1180px){
+  :root:not([data-theme="light"]) .tournament-layout{
+    container-type:inline-size!important;
+  }
+  :root:not([data-theme="light"]) .tournament-detail-panel,
+  :root:not([data-theme="light"]) .round-workspace{
+    overflow:visible!important;
+  }
+  :root:not([data-theme="light"]) .tournament-detail-panel .round-workspace{
+    box-sizing:border-box!important;
+    width:calc(100cqw - 28px)!important;
+    max-width:none!important;
+    /* 35%/350px left pane + 1px divider + two 14px grid gaps. */
+    margin-left:calc(0px - max(350px,35cqw) - 29px)!important;
+    margin-top:24px!important;
+    padding:0!important;
+  }
+  /* Match the outer edges of the progression, bracket and history cards. */
+  :root:not([data-theme="light"]) .round-workspace>.target-progression-card,
+  :root:not([data-theme="light"]) .round-workspace>.live-bracket{
+    box-sizing:border-box!important;
+    width:100%!important;
+    max-width:none!important;
+    margin-left:0!important;
+    margin-right:0!important;
+  }
+  :root:not([data-theme="light"]) .round-workspace .bracket-scroll{
+    box-sizing:border-box!important;
+    width:100%!important;
+    max-width:100%!important;
+  }
+  :root:not([data-theme="light"]) .round-workspace .bracket-zoom-shell{
+    margin-left:auto;
+    margin-right:auto;
+  }
+}
+/* Below desktop split size, retain the existing stacked/readable view. */
+@media (max-width:1179px){
+  :root:not([data-theme="light"]) .round-workspace{
+    max-width:100%!important;
+  }
+}
