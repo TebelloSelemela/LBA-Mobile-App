@@ -1437,7 +1437,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const [tournamentPlayers, setTournamentPlayers] = useState(players);
   const [loadingDoublesTeams, setLoadingDoublesTeams] = useState(false);
   const [bracketZoom, setBracketZoom] = useState(1);
-  const [showCreate, setShowCreate] = useState(true);
+  const [showCreate, setShowCreate] = useState(tournaments.length === 0);
   const [splitPct, setSplitPct] = useState(() => {
     const saved=Number(localStorage.getItem('lba_tournament_split') || 32);
     return Number.isFinite(saved) ? Math.max(24,Math.min(46,saved)) : 32;
@@ -1765,6 +1765,8 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   async function createTournament(e) {
     e.preventDefault();
     if (!form.name.trim()) { setMessage('Tournament name is required.'); return; }
+    if (!form.start_date) { setMessage('Tournament start date is required.'); return; }
+    if (!form.end_date) { setMessage('Tournament end date is required.'); return; }
     setBusy(true);
     try {
       const t = await api('/tournaments', {method:'POST', body:JSON.stringify(form)});
@@ -1996,32 +1998,24 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   }
 
   return <section className="tournament-layout" style={{'--tournament-left':splitPct+'%'}}>
-    <div className="panel tournament-list-panel">
-      <div className="section-head tournament-manager-head">
-        <div><span className="eyebrow">TOURNAMENT MANAGEMENT</span><h3>Tournaments</h3></div>
-        <div className="quick-actions">
-          <button type="button" className="mini" onClick={()=>setShowCreate(v=>!v)}><Plus size={14}/> {showCreate ? 'Close' : 'New Tournament'}</button>
-          <CalendarDays size={22}/>
-        </div>
-      </div>
-
-      {showCreate && <form className="form tournament-create-form" onSubmit={createTournament}>
+    <div className={showCreate ? "panel tournament-list-panel create-mode" : "panel tournament-list-panel list-mode"}>
+      {showCreate ? <form className="form tournament-create-form tournament-create-full" onSubmit={createTournament}>
         <div className="create-tournament-heading">
           <span className="create-tournament-icon"><Trophy size={22}/></span>
-          <div><h3>Create Tournament</h3><p>Set up a new badminton tournament</p></div>
+          <div className="create-heading-copy"><h3>Create Tournament</h3><p>Set up a new badminton tournament</p></div>
+          {activeTournaments.length>0 && <button type="button" className="mini create-close-button" onClick={()=>setShowCreate(false)}>Close</button>}
         </div>
 
-        <div className="tournament-form-grid">
-          <Input label="Tournament name *" placeholder="Enter tournament name" value={form.name} onChange={v=>setForm({...form,name:v})}/>
-          <Input label="Tournament code (optional)" placeholder="e.g. OASIS-2026" value={form.tournament_code} onChange={v=>setForm({...form,tournament_code:v})}/>
-          <Input label="Venue *" placeholder="Enter venue name" value={form.venue} onChange={v=>setForm({...form,venue:v})}/>
-          <label><span>Scoring mode</span><select value={form.scoring_mode || '21'} onChange={e=>setForm({...form,scoring_mode:e.target.value})}><option value="21">3 × 21 points</option><option value="15">3 × 15 points</option></select></label>
-        </div>
+        <Input label="Tournament name *" placeholder="Enter tournament name" value={form.name} onChange={v=>setForm({...form,name:v})}/>
+        <Input label="Tournament code (optional)" placeholder="e.g. OASIS-2026" value={form.tournament_code} onChange={v=>setForm({...form,tournament_code:v})}/>
+        <Input label="Venue *" placeholder="Enter venue name" value={form.venue} onChange={v=>setForm({...form,venue:v})}/>
 
         <div className="form-row tournament-date-row">
           <Input label="Start date *" type="date" value={form.start_date} onChange={v=>setForm({...form,start_date:v})}/>
           <Input label="End date *" type="date" value={form.end_date} onChange={v=>setForm({...form,end_date:v})}/>
         </div>
+
+        <label className="tournament-scoring-field"><span>Scoring mode</span><select value={form.scoring_mode || '21'} onChange={e=>setForm({...form,scoring_mode:e.target.value})}><option value="21">3 × 21 points</option><option value="15">3 × 15 points</option></select></label>
 
         <div className="tournament-ranking-mode-field">
           <span className="field-label">Ranking Points</span>
@@ -2052,59 +2046,60 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           </div>
         </div>}
 
-        <div className="tournament-create-actions">
-          <button type="button" className="button secondary clear-tournament-form" onClick={()=>setForm({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft',scoring_mode:appSettings?.default_scoring_mode || '21',ranking_mode:'manual',ranking_rules:{R128:'0',R64:'0',R32:'0',R16:'0',QUARTERFINALIST:'0',SEMIFINALIST:'0',RUNNER_UP:'0',CHAMPION:'0'}})}><RefreshCw size={15}/> Clear</button>
-          <button className="button create-tournament-submit" disabled={busy}><Plus size={16}/> Create Tournament</button>
+        <button className="button create-tournament-submit" disabled={busy}><Plus size={16}/> Create Tournament</button>
+      </form> : <>
+        <div className="tournament-list-toolbar">
+          <button type="button" className="button new-tournament-button" onClick={()=>setShowCreate(true)}><Plus size={16}/> New Tournament</button>
+          <button type="button" className="mini tournament-calendar-button" title="Tournament dates"><CalendarDays size={18}/></button>
         </div>
-      </form>}
 
-      <div className="compact-section-heading active-tournament-heading">
-        <div><span className="eyebrow">ACTIVE</span><h3>Tournaments</h3></div>
-        <span className="section-count">{activeTournaments.length} active</span>
-      </div>
-      <div className="draw-list tournament-active-list">
-        {activeTournaments.map(t=>
-          <div className={selectedId===t.id ? 'tournament-list-item selected' : 'tournament-list-item'} key={t.id}>
-            <button type="button" className="draw-item tournament-select-button" onClick={()=>setSelectedId(t.id)}>
-              <div className="tournament-card-top"><b>{t.name}</b><span className={'tournament-status-pill '+String(t.status || 'Draft').toLowerCase()}>{t.status || 'Draft'}</span></div>
-              <small className="tournament-card-code">{t.tournament_code}</small>
-              <div className="tournament-card-meta">
-                <span><CheckCircle2 size={12}/>{t.completed_matches || 0}/{t.total_matches || 0} complete</span>
-                <span><SettingsIcon size={12}/>{t.scoring_mode==='15'?'3×15':'3×21'} · {t.ranking_mode==='automatic'?'Automatic':'Manual'}</span>
-                {t.start_date && <span><CalendarDays size={12}/>{t.start_date}{t.end_date && t.end_date!==t.start_date ? ' → '+t.end_date : ''}</span>}
-              </div>
-            </button>
-            <button type="button" className="tournament-archive-button" onClick={()=>archiveTournament(t)} title="Archive tournament" aria-label={'Archive '+t.name}><Archive size={15}/></button>
+        <div className="draw-list tournament-active-list">
+          {activeTournaments.map(t=>
+            <div className={selectedId===t.id ? 'tournament-list-item selected' : 'tournament-list-item'} key={t.id}>
+              <button type="button" className="draw-item tournament-select-button" onClick={()=>setSelectedId(t.id)}>
+                <div className="tournament-card-top">
+                  <b>{t.name}</b>
+                  <span className={'tournament-card-dot '+String(t.status || 'Draft').toLowerCase()} />
+                </div>
+                <small className="tournament-card-summary">{t.tournament_code} · {t.status || 'Draft'} · {t.completed_matches || 0}/{t.total_matches || 0} matches complete</small>
+                <div className="tournament-card-meta">
+                  <span><SettingsIcon size={12}/>{t.scoring_mode==='15'?'3×15':'3×21'} · {t.ranking_mode==='automatic'?'Automatic':'Manual'}</span>
+                  <span><CalendarDays size={12}/>{t.start_date ? (t.end_date && t.end_date!==t.start_date ? t.start_date+' → '+t.end_date : t.start_date) : 'Date not set'}</span>
+                </div>
+              </button>
+              <button type="button" className="tournament-archive-button" onClick={()=>archiveTournament(t)} title="Archive tournament" aria-label={'Archive '+t.name}><Archive size={15}/></button>
+            </div>
+          )}
+          {!activeTournaments.length&&<div className="empty">No active tournaments. Create a tournament to begin.</div>}
+        </div>
+
+        <div className="tournament-history-summary">
+          <div className="history-heading">
+            <div><span className="eyebrow">ARCHIVE</span><h3>Tournament History</h3></div>
           </div>
-        )}
-        {!activeTournaments.length&&<div className="empty">No active tournaments. Create a tournament or review archived history below.</div>}
-      </div>
-
-      <div className="tournament-history-summary">
-        <div className="history-heading">
-          <div><span className="eyebrow">ARCHIVE</span><h3>Tournament History</h3></div>
-          <span className="section-count">{tournaments.filter(t => t.status === 'Completed' || Number(t.is_archived || 0)===1).length} archived</span>
+          {tournaments.filter(t => t.status === 'Completed' || Number(t.is_archived || 0)===1).map(t => {
+            const h=historyDetails[t.id];
+            const p=h?.podium || {};
+            const ep=h?.event_podiums || {};
+            const thirdPlayers=p.third_players || (p.third ? [p.third] : []);
+            return <button className="history-card" key={'history-card-'+t.id} onClick={()=>setSelectedId(t.id)}>
+              <div className="history-card-title">
+                <b>{t.name}</b>
+                <span>{Number(t.is_archived || 0)===1 ? 'Archived · ' : ''}{t.venue || 'Venue not recorded'}</span>
+              </div>
+              {Object.keys(ep).length ? <div className="history-event-summary">
+                {Object.entries(ep).map(([event,podium])=><div key={event}><b>{event}</b><span>1st: {podium.first || '—'}</span><span>2nd: {podium.second || '—'}</span><span>3rd: {podium.third || '—'}</span></div>)}
+              </div> : <div className="history-card-grid">
+                <div><small>1st Place</small><strong>{p.first || '—'}</strong></div>
+                <div><small>2nd Place</small><strong>{p.second || '—'}</strong></div>
+                <div><small>3rd Place</small><strong>{thirdPlayers.length ? thirdPlayers.join(' & ') : '—'}</strong></div>
+                <div><small>Date</small><strong>{t.start_date || (h?.finished_at ? formatLbaTime(h.finished_at).split(',')[0] : '—')}</strong></div>
+              </div>}
+            </button>;
+          })}
+          {!tournaments.some(t => t.status === 'Completed' || Number(t.is_archived || 0)===1) && <div className="empty small">Completed or archived tournaments will appear here.</div>}
         </div>
-        {tournaments.filter(t => t.status === 'Completed' || Number(t.is_archived || 0)===1).map(t => {
-          const h=historyDetails[t.id];
-          const p=h?.podium || {};
-          const ep=h?.event_podiums || {};
-          const thirdPlayers=p.third_players || (p.third ? [p.third] : []);
-          return <button className="history-card" key={'history-card-'+t.id} onClick={()=>setSelectedId(t.id)}>
-            <div className="history-card-title"><div><b>{t.name}</b><small><MapPin size={11}/>{t.venue || 'Venue not recorded'}</small></div><span className="history-status-pill">{Number(t.is_archived || 0)===1 ? 'Archived' : 'Completed'}</span></div>
-            {Object.keys(ep).length ? <div className="history-event-summary">
-              {Object.entries(ep).map(([event,podium])=><div key={event}><b>{event}</b><span>1st: {podium.first || '—'}</span><span>2nd: {podium.second || '—'}</span><span>3rd: {podium.third || '—'}</span></div>)}
-            </div> : <div className="history-card-grid">
-              <div><small>1st Place</small><strong>{p.first || '—'}</strong></div>
-              <div><small>2nd Place</small><strong>{p.second || '—'}</strong></div>
-              <div><small>3rd Place</small><strong>{thirdPlayers.length ? thirdPlayers.join(' & ') : '—'}</strong></div>
-              <div><small>Date</small><strong>{t.start_date || (h?.finished_at ? formatLbaTime(h.finished_at).split(',')[0] : '—')}</strong></div>
-            </div>}
-            <small className="history-date">{t.start_date || (h?.finished_at ? formatLbaTime(h.finished_at).split(',')[0] : '—')}</small>
-          </button>;
-        })}
-        {!tournaments.some(t => t.status === 'Completed' || Number(t.is_archived || 0)===1) && <div className="empty small">Completed or archived tournaments will appear here.</div>}
-      </div>
+      </>}
     </div>
 
     <div className="tournament-resizer" role="separator" aria-label="Resize tournament list and draw workspace" onPointerDown={startTournamentResize}><span/></div>
