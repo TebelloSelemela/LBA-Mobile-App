@@ -2256,7 +2256,10 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             </div>}
             <button className="button" disabled={busy || (isDoublesEvent && completeDoublesPairs.length<2)}><Shuffle size={16}/> Generate {isDoublesEvent ? selectedEvent+' Round 1 — '+completeDoublesPairs.length+' Teams' : 'Round 1 Draw'}</button>
           </form>
-        </div> : <div className="panel round-workspace">
+        </div> : null}
+      </>}
+    </div>
+    {detail && eventHasDraw && <div className="panel round-workspace tournament-bracket-workspace">
           <div className="round-action-bar target-progression-card">
             <div className="progression-copy">
               <span className="progression-icon"><BarChart3 size={22}/></span>
@@ -2428,8 +2431,6 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             </div>
           </section>
         </div>}
-      </>}
-    </div>
   </section>;
 }
 

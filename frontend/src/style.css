@@ -5384,3 +5384,119 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   font-weight:720!important;
   letter-spacing:-.012em;
 }
+
+
+/* LBA expanded history and nonoverlapping bracket v1.0.17
+   Match the reference's large, readable archive; preserve event workflows. */
+:root:not([data-theme="light"]) .tournament-layout{row-gap:18px!important}
+:root:not([data-theme="light"]) .tournament-bracket-workspace{
+  position:relative!important;box-sizing:border-box!important;
+  grid-column:1/-1!important;grid-row:2!important;min-width:0!important;
+  width:100%!important;max-width:100%!important;margin:0!important;
+  padding:0 14px 18px!important;background:transparent!important;border:0!important;
+  box-shadow:none!important;overflow:visible!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace>.target-progression-card,
+:root:not([data-theme="light"]) .tournament-bracket-workspace>.live-bracket{
+  box-sizing:border-box!important;width:100%!important;max-width:100%!important;
+  margin-left:0!important;margin-right:0!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-scroll{
+  box-sizing:border-box!important;width:100%!important;max-width:100%!important;
+}
+/* Separate scroll regions leave the archive visible and usable on short screens. */
+:root:not([data-theme="light"]) .tournament-list-panel.list-mode{
+  display:flex!important;flex-direction:column!important;overflow:hidden!important;
+}
+:root:not([data-theme="light"]) .tournament-active-list{
+  flex:0 0 auto!important;min-height:0!important;
+  max-height:clamp(170px,29vh,230px)!important;margin-bottom:12px!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary{
+  box-sizing:border-box!important;flex:1 1 auto!important;min-height:0!important;
+  max-height:none!important;overflow-x:hidden!important;overflow-y:auto!important;
+  margin:0!important;padding:17px 5px 20px 0!important;
+  border-top:1px solid rgba(104,171,206,.26)!important;
+  scrollbar-width:thin!important;scrollbar-color:rgba(103,168,194,.5) transparent!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-heading{
+  margin-bottom:14px!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-heading h3{
+  font-size:18px!important;color:#e7f6ff!important;letter-spacing:-.025em!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-heading .eyebrow{
+  font-size:11px!important;color:#8bdafb!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-card{
+  width:100%!important;min-height:112px!important;margin:0 0 12px!important;
+  padding:15px!important;border-radius:15px!important;
+  border:1px solid rgba(101,164,201,.3)!important;
+  background:radial-gradient(circle at 100% 0,rgba(87,183,235,.08),transparent 42%),linear-gradient(145deg,#0c283a,#071d2d)!important;
+  box-shadow:inset 0 1px 0 rgba(230,250,255,.035),0 10px 22px rgba(0,0,0,.09)!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-card:hover{
+  border-color:rgba(83,229,192,.56)!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-card-title{
+  gap:10px!important;align-items:flex-start!important;margin-bottom:10px!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-card-title>b{
+  flex:1!important;min-width:0!important;font-size:13px!important;line-height:1.35!important;
+  color:#f1faff!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-card-title>span{
+  flex:0 0 40%!important;max-width:40%!important;color:#b0ccdd!important;
+  font-size:9.5px!important;line-height:1.4!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-event-summary{
+  display:grid!important;gap:8px!important;margin-top:11px!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-event-summary>div{
+  display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:6px 10px!important;padding:11px!important;border-radius:10px!important;
+  background:#092030!important;border:1px solid rgba(109,176,211,.18)!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-event-summary>div>b{
+  grid-column:1/-1!important;color:#91efd7!important;font-size:11px!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-event-summary>div>span{
+  color:#c8dce9!important;font-size:9.5px!important;white-space:normal!important;
+  overflow-wrap:anywhere!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-card-grid{
+  display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:9px!important;margin-top:12px!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-card-grid>div{
+  min-height:55px!important;padding:10px!important;border-radius:10px!important;
+  border:1px solid rgba(109,176,211,.15)!important;background:#092030!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-card-grid small{
+  font-size:9px!important;color:#a2cae0!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary .history-card-grid strong{
+  font-size:11px!important;color:#f3faff!important;white-space:normal!important;overflow-wrap:anywhere!important;
+}
+/* Rich navy / sapphire card tones with mint kept as the primary action colour. */
+:root:not([data-theme="light"]) .tournament-meta-card,
+:root:not([data-theme="light"]) .tournament-event-stats .stat,
+:root:not([data-theme="light"]) .target-event-draws,
+:root:not([data-theme="light"]) .target-progression-card,
+:root:not([data-theme="light"]) .live-bracket{
+  background:radial-gradient(circle at 100% 0,rgba(89,187,244,.055),transparent 40%),linear-gradient(150deg,#0a2638,#071b2c)!important;
+  border-color:rgba(110,169,210,.23)!important;
+}
+:root:not([data-theme="light"]) .target-event-draws .eyebrow,
+:root:not([data-theme="light"]) .live-bracket .eyebrow{color:#90ddfb!important}
+@media(min-width:1041px){
+  :root:not([data-theme="light"]) .tournament-layout>.tournament-list-panel{grid-column:1!important;grid-row:1!important}
+  :root:not([data-theme="light"]) .tournament-layout>.tournament-resizer{grid-column:2!important;grid-row:1!important}
+  :root:not([data-theme="light"]) .tournament-layout>.tournament-detail-panel{grid-column:3!important;grid-row:1!important}
+  :root:not([data-theme="light"]) .tournament-layout>.tournament-bracket-workspace{grid-column:1/-1!important;grid-row:2!important}
+}
+@media(max-width:1040px){
+  :root:not([data-theme="light"]) .tournament-bracket-workspace{
+    grid-row:auto!important;width:100%!important;margin-top:16px!important;padding:0!important;
+  }
+}
