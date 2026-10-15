@@ -5267,3 +5267,120 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
     max-width:100%!important;
   }
 }
+
+
+/* =======================================================================
+   LESBAD typography & colour refinement v1.0.16
+   Elegant system-native Windows type with subtle ice, sky and mint hierarchy.
+   Dark theme only. Existing layout, sizing, workflows and light theme remain.
+   ======================================================================= */
+:root:not([data-theme="light"]){
+  --lesbad-ui-font:"Segoe UI Variable Text","Segoe UI Variable","Segoe UI","Inter",system-ui,sans-serif;
+  --lesbad-display-font:"Segoe UI Variable Display","Segoe UI Variable","Segoe UI","Inter",system-ui,sans-serif;
+  --lesbad-ice:#f1f9fe;
+  --lesbad-sky:#a8def5;
+  --lesbad-soft:#aec5d2;
+  --lesbad-mint:#6ef0c7;
+}
+:root:not([data-theme="light"]) .app-shell{
+  color:var(--lesbad-ice);
+  font-kerning:normal;
+  -webkit-font-smoothing:antialiased;
+}
+:root:not([data-theme="light"]) .app-shell :is(h1,h2,h3,h4),
+:root:not([data-theme="light"]) .app-shell :is(.tournament-card-top>b,.history-card-title>b,.progression-copy b,.event-draw-copy b,.draw-header b,.participant b,.bracket-stage-title b){
+  font-family:var(--lesbad-display-font)!important;
+  font-kerning:normal;
+  letter-spacing:-.018em;
+}
+:root:not([data-theme="light"]) .sidebar .brand h1{
+  font-family:var(--lesbad-display-font)!important;
+  color:#f3fbff!important;
+  font-weight:780!important;
+  letter-spacing:-.025em!important;
+}
+:root:not([data-theme="light"]) .sidebar .brand p{
+  color:#b6cdd8!important;
+}
+:root:not([data-theme="light"]) .nav:not(.active){
+  color:#deedf4!important;
+  font-weight:660!important;
+}
+:root:not([data-theme="light"]) .nav.active{
+  font-weight:760!important;
+}
+/* Main headlines: softly graduated white-to-ice, not glowing neon. */
+:root:not([data-theme="light"]) :is(.live-bracket-head h3,.progression-copy b,.event-draw-copy b,.round-heading h3,.history-heading h3){
+  color:var(--lesbad-ice)!important;
+  font-weight:760!important;
+  letter-spacing:-.025em!important;
+}
+:root:not([data-theme="light"]) :is(.live-bracket-head h3,.event-draw-copy b){
+  background:linear-gradient(105deg,#f7fcff 5%,#c9edfa 88%);
+  -webkit-background-clip:text;
+  background-clip:text;
+  -webkit-text-fill-color:transparent;
+}
+:root:not([data-theme="light"]) :is(.eyebrow,.history-heading .eyebrow,.round-heading .eyebrow,.live-bracket-head .eyebrow){
+  color:var(--lesbad-mint)!important;
+  letter-spacing:.085em;
+}
+:root:not([data-theme="light"]) :is(.progression-copy small,.event-draw-copy small,.live-bracket-head small,.round-heading small){
+  color:var(--lesbad-soft)!important;
+}
+/* Active state and event labels: distinctive but restrained. */
+:root:not([data-theme="light"]) .target-event-draws .event-tab:not(.active) .event-tab-copy b{
+  color:#daeaf3!important;
+}
+:root:not([data-theme="light"]) .target-event-draws .event-tab.active .event-tab-copy b{
+  color:#91f6d7!important;
+}
+:root:not([data-theme="light"]) :is(.event-tab-copy>span,.tournament-card-summary,.tournament-card-meta span,.history-card-title>span){
+  color:#a9c2d0!important;
+}
+:root:not([data-theme="light"]) :is(.tournament-card-top>b,.history-card-title>b,.history-card-grid strong){
+  color:#f0f8ff!important;
+  font-weight:730!important;
+}
+:root:not([data-theme="light"]) .tournament-list-item.selected .tournament-card-top>b{
+  color:#c6fff0!important;
+}
+/* Detail cards: keep numerical values prominent and meta labels legible. */
+:root:not([data-theme="light"]) :is(.tournament-meta-card small,.stat-copy>span,.event-podium-row>span){
+  color:#b1cad7!important;
+}
+:root:not([data-theme="light"]) :is(.tournament-meta-card b,.stat-copy>b,.event-podium-row>strong,.event-podium-row>span b){
+  color:#edf8ff!important;
+  font-weight:730!important;
+}
+:root:not([data-theme="light"]) .podium-title{
+  color:#77f3cf!important;
+}
+/* Draw fixtures and players: readable at projection and desktop scale. */
+:root:not([data-theme="light"]) .round-section .round-heading h3{
+  color:#e4f5ff!important;
+}
+:root:not([data-theme="light"]) .tournament-fixture>small,
+:root:not([data-theme="light"]) .bracket-match>small{
+  color:#72e9c7!important;
+}
+:root:not([data-theme="light"]) .tournament-fixture>div:first-of-type b,
+:root:not([data-theme="light"]) .bracket-match>div span{
+  color:#f2f9ff!important;
+  font-weight:700!important;
+}
+:root:not([data-theme="light"]) .tournament-fixture .helper,
+:root:not([data-theme="light"]) .history-match-meta{
+  color:#acc6d8!important;
+}
+:root:not([data-theme="light"]) .bracket-stage-title b{
+  color:#d9f0fc!important;
+  font-weight:760!important;
+}
+:root:not([data-theme="light"]) .bracket-match .winner span{
+  color:#b1ffdf!important;
+}
+:root:not([data-theme="light"]) :is(.new-tournament-button,.tournament-report-toolbar .button.secondary,.bracket-view-tools .mini){
+  font-weight:720!important;
+  letter-spacing:-.012em;
+}
