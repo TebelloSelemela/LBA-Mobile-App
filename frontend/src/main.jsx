@@ -2036,13 +2036,14 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
         {form.ranking_mode==='automatic' && <div className="round-points-create">
           <div className="round-points-head"><b>Round Points</b><span className="badge green">Auto Capture Active</span></div>
           <div className="round-points-grid">
+            <label><span>R128</span><input type="number" min="0" step="1" value={form.ranking_rules.R128} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,R128:e.target.value}})}/></label>
             <label><span>R64</span><input type="number" min="0" step="1" value={form.ranking_rules.R64} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,R64:e.target.value}})}/></label>
             <label><span>R32</span><input type="number" min="0" step="1" value={form.ranking_rules.R32} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,R32:e.target.value}})}/></label>
             <label><span>R16</span><input type="number" min="0" step="1" value={form.ranking_rules.R16} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,R16:e.target.value}})}/></label>
-            <label><span>QF</span><input type="number" min="0" step="1" value={form.ranking_rules.QUARTERFINALIST} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,QUARTERFINALIST:e.target.value}})}/></label>
-            <label><span>SF</span><input type="number" min="0" step="1" value={form.ranking_rules.SEMIFINALIST} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,SEMIFINALIST:e.target.value}})}/></label>
-            <label><span>Runner-up</span><input type="number" min="0" step="1" value={form.ranking_rules.RUNNER_UP} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,RUNNER_UP:e.target.value}})}/></label>
-            <label><span>Champion</span><input type="number" min="0" step="1" value={form.ranking_rules.CHAMPION} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,CHAMPION:e.target.value}})}/></label>
+            <label><span>Quarterfinal</span><input type="number" min="0" step="1" value={form.ranking_rules.QUARTERFINALIST} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,QUARTERFINALIST:e.target.value}})}/></label>
+            <label><span>Semifinal</span><input type="number" min="0" step="1" value={form.ranking_rules.SEMIFINALIST} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,SEMIFINALIST:e.target.value}})}/></label>
+            <label><span>Final · Runner-up</span><input type="number" min="0" step="1" value={form.ranking_rules.RUNNER_UP} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,RUNNER_UP:e.target.value}})}/></label>
+            <label><span>Final · Champion</span><input type="number" min="0" step="1" value={form.ranking_rules.CHAMPION} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,CHAMPION:e.target.value}})}/></label>
           </div>
         </div>}
 
@@ -2134,13 +2135,14 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           {detail.ranking_mode==='automatic' && showRoundPoints && <div className="round-points-editor">
             <div className="round-points-head"><b>Round Points</b><span className="badge green">Auto Capture Active</span></div>
             <div className="round-points-grid edit">
+              <label><span>R128</span><input type="number" min="0" step="1" value={roundPoints.R128} onChange={e=>setRoundPoints({...roundPoints,R128:e.target.value})}/></label>
               <label><span>R64</span><input type="number" min="0" step="1" value={roundPoints.R64} onChange={e=>setRoundPoints({...roundPoints,R64:e.target.value})}/></label>
               <label><span>R32</span><input type="number" min="0" step="1" value={roundPoints.R32} onChange={e=>setRoundPoints({...roundPoints,R32:e.target.value})}/></label>
               <label><span>R16</span><input type="number" min="0" step="1" value={roundPoints.R16} onChange={e=>setRoundPoints({...roundPoints,R16:e.target.value})}/></label>
-              <label><span>QF</span><input type="number" min="0" step="1" value={roundPoints.QUARTERFINALIST} onChange={e=>setRoundPoints({...roundPoints,QUARTERFINALIST:e.target.value})}/></label>
-              <label><span>SF</span><input type="number" min="0" step="1" value={roundPoints.SEMIFINALIST} onChange={e=>setRoundPoints({...roundPoints,SEMIFINALIST:e.target.value})}/></label>
-              <label><span>Runner-up</span><input type="number" min="0" step="1" value={roundPoints.RUNNER_UP} onChange={e=>setRoundPoints({...roundPoints,RUNNER_UP:e.target.value})}/></label>
-              <label><span>Champion</span><input type="number" min="0" step="1" value={roundPoints.CHAMPION} onChange={e=>setRoundPoints({...roundPoints,CHAMPION:e.target.value})}/></label>
+              <label><span>Quarterfinal</span><input type="number" min="0" step="1" value={roundPoints.QUARTERFINALIST} onChange={e=>setRoundPoints({...roundPoints,QUARTERFINALIST:e.target.value})}/></label>
+              <label><span>Semifinal</span><input type="number" min="0" step="1" value={roundPoints.SEMIFINALIST} onChange={e=>setRoundPoints({...roundPoints,SEMIFINALIST:e.target.value})}/></label>
+              <label><span>Final · Runner-up</span><input type="number" min="0" step="1" value={roundPoints.RUNNER_UP} onChange={e=>setRoundPoints({...roundPoints,RUNNER_UP:e.target.value})}/></label>
+              <label><span>Final · Champion</span><input type="number" min="0" step="1" value={roundPoints.CHAMPION} onChange={e=>setRoundPoints({...roundPoints,CHAMPION:e.target.value})}/></label>
             </div>
             <div className="round-points-actions"><button type="button" className="button" disabled={busy} onClick={saveRoundPoints}><CheckCircle2 size={14}/> Save Points</button></div>
           </div>}
