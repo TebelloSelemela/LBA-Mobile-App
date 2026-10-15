@@ -1633,7 +1633,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
 
   const bracketGeometry = useMemo(() => {
     if (!bracketModel) return null;
-    const colWidth=250, gap=82, unit=122, cardHeight=92, topOffset=52;
+    const colWidth=285, gap=100, unit=118, cardHeight=94, topOffset=54;
     const width=bracketModel.columns.length*colWidth + Math.max(0,bracketModel.columns.length-1)*gap;
     const height=Math.max(150,bracketModel.firstCount*unit) + topOffset;
     const cardPosition=(roundIndex,matchIndex) => {
@@ -1684,16 +1684,33 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   function fitBracket() {
     if (!bracketGeometry) return;
     window.requestAnimationFrame(() => {
-      const scroller=document.querySelector('.tournament-detail-panel .bracket-scroll');
+      const scroller=document.querySelector('.tournament-bracket-workspace .bracket-scroll');
       if (!scroller) return;
-      const available=Math.max(280,scroller.clientWidth-24);
-      const next=Math.max(0.5,Math.min(1.5,available/bracketGeometry.width));
+      const available=Math.max(260,scroller.clientWidth-24);
+      const next=Math.max(0.38,Math.min(1.5,available/bracketGeometry.width));
       setBracketZoom(Math.round(next*100)/100);
+      scroller.scrollLeft=0;
     });
   }
 
+  // Like Projector mode, open each tournament/event with the whole path visible
+  // horizontally. Manual +/- zoom remains available after the initial fit.
+  useEffect(() => {
+    if (!bracketGeometry || !selectedId || !eventHasDraw) return;
+    const frame=window.requestAnimationFrame(() => {
+      const scroller=document.querySelector('.tournament-bracket-workspace .bracket-scroll');
+      if (!scroller) return;
+      const available=Math.max(260,scroller.clientWidth-24);
+      const next=Math.max(0.38,Math.min(1.5,available/bracketGeometry.width));
+      setBracketZoom(Math.round(next*100)/100);
+      scroller.scrollLeft=0;
+      scroller.scrollTop=0;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [bracketGeometry, selectedId, selectedEvent, eventHasDraw]);
+
   function changeBracketZoom(delta) {
-    setBracketZoom(z => Math.max(0.5,Math.min(1.5,Math.round((z+delta)*10)/10)));
+    setBracketZoom(z => Math.max(0.38,Math.min(1.5,Math.round((z+delta)*100)/100)));
   }
 
   function updateDoublesPair(index, field, value) {
@@ -2278,7 +2295,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             <div className="live-bracket-head">
               <div><span className="eyebrow">LIVE DRAW PATH</span><h3>{selectedEvent} Knockout Bracket</h3><small>Filled through {latestRound?.stage || 'the current draw'}; future matches remain on standby.</small></div>
               <div className="bracket-view-tools">
-                <button type="button" className="mini" onClick={()=>changeBracketZoom(-0.1)} disabled={bracketZoom<=0.5}>−</button>
+                <button type="button" className="mini" onClick={()=>changeBracketZoom(-0.1)} disabled={bracketZoom<=0.38}>−</button>
                 <b>{Math.round(bracketZoom*100)}%</b>
                 <button type="button" className="mini" onClick={()=>changeBracketZoom(0.1)} disabled={bracketZoom>=1.5}>+</button>
                 <button type="button" className="mini" onClick={fitBracket}>Fit</button>

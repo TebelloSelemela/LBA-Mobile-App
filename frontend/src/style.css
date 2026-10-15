@@ -5701,3 +5701,130 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
     font-size:9.5px!important;
   }
 }
+
+
+/* ================================================================
+   LESBAD Tournament bracket parity with Projector v1.0.19
+   Bracket presentation only. Projector rules are not modified.
+   Match cards, connectors, headings and scale mirror Projector.
+   ================================================================ */
+:root:not([data-theme="light"]) .tournament-bracket-workspace .live-bracket{
+  background:linear-gradient(150deg,#092539,#071b2c)!important;
+  border:1px solid rgba(107,185,210,.26)!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-scroll{
+  position:relative;
+  overflow:auto!important;
+  padding:14px!important;
+  border:1px solid rgba(113,225,185,.16)!important;
+  border-radius:16px!important;
+  background:rgba(255,255,255,.022)!important;
+  scrollbar-width:thin;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-stage-title{
+  height:40px!important;
+  padding:0 10px!important;
+  color:#dffcf1!important;
+  border-bottom:2px solid #31d39a!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-stage-title b{
+  font-size:14px!important;
+  color:#e8fbf4!important;
+  font-weight:760!important;
+  letter-spacing:.07em!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-stage-title span{
+  font-size:11px!important;
+  color:#a7c2cf!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-connectors path{
+  fill:none!important;
+  stroke:#7895a7!important;
+  stroke-width:2!important;
+  opacity:.7!important;
+  vector-effect:non-scaling-stroke;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-match{
+  min-height:94px!important;
+  padding:9px 10px!important;
+  border:1px solid rgba(150,185,199,.25)!important;
+  border-radius:13px!important;
+  background:linear-gradient(145deg,rgba(46,82,95,.65),rgba(17,47,64,.84))!important;
+  color:#edf8f4!important;
+  box-shadow:0 8px 18px rgba(0,0,0,.16),inset 0 1px rgba(255,255,255,.06)!important;
+  overflow:hidden;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-match>small{
+  display:block!important;
+  font-size:9px!important;
+  font-weight:800!important;
+  letter-spacing:.06em!important;
+  margin-bottom:5px!important;
+  color:#77edc3!important;
+  opacity:1!important;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+  overflow:hidden;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-match>div{
+  box-sizing:border-box!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:space-between!important;
+  gap:7px!important;
+  min-height:25px!important;
+  padding:4px 6px!important;
+  border-radius:7px!important;
+  font-size:12px!important;
+  font-weight:770!important;
+  color:#edf8f4!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-match>div+div{
+  border-top:1px solid rgba(255,255,255,.08)!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-match>div span{
+  font-size:12px!important;
+  font-weight:770!important;
+  color:#f2faff!important;
+  text-overflow:ellipsis;
+  overflow:hidden;
+  white-space:nowrap;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-match .winner{
+  background:rgba(49,211,154,.17)!important;
+  color:#dffcf1!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-match .winner span{
+  color:#bcffdf!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-match em{
+  display:block!important;
+  margin-top:4px!important;
+  color:#bed1db!important;
+  font-size:10px!important;
+  font-style:normal;
+  font-weight:760!important;
+  opacity:1!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-match.standby{
+  opacity:.65!important;
+  border-style:dashed!important;
+  border-color:rgba(145,181,196,.46)!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-match.pending{
+  border-color:rgba(132,174,194,.34)!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-match.progress{
+  border-color:#f0b14b!important;
+  box-shadow:0 0 0 1px rgba(240,177,75,.12),0 8px 18px rgba(0,0,0,.16)!important;
+}
+:root:not([data-theme="light"]) .tournament-bracket-workspace .bracket-match.complete{
+  border-color:rgba(49,211,154,.44)!important;
+}
+/* Avoid a card being hidden behind the controls on narrow windows. */
+@media(max-width:700px){
+  :root:not([data-theme="light"]) .tournament-bracket-workspace .live-bracket-head{
+    flex-direction:column!important;
+    align-items:flex-start!important;
+  }
+}
