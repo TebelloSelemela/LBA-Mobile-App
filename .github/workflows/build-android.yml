@@ -1,15 +1,43 @@
-name: Build LESBAD MOBILE APK
-# Authentication flow release build
+name: Build signed Android release
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
+    inputs:
+      version_name:
+        description: Android version name
+        required: true
+        default: '1.7'
+        type: string
+      version_code:
+        description: Increasing Android version code (greater than 7)
+        required: true
+        default: '8'
+        type: string
+  workflow_call:
+    inputs:
+      version_name:
+        required: true
+        type: string
+      version_code:
+        required: true
+        type: string
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: true
+      ANDROID_KEYSTORE_PASSWORD:
+        required: true
+      ANDROID_KEY_ALIAS:
+        required: true
+      ANDROID_KEY_PASSWORD:
+        required: true
+
+permissions:
+  contents: read
 
 jobs:
-  build-apk:
+  build-release:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     defaults:
       run:
@@ -45,6 +73,9 @@ jobs:
         run: npx cap sync android
 
       - name: Apply LESBAD MOBILE name, network access and launcher icon
+        env:
+          VERSION_NAME: ${{ inputs.version_name }}
+          VERSION_CODE: ${{ inputs.version_code }}
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -69,8 +100,15 @@ jobs:
 
           gradle = Path("android/app/build.gradle")
           g = gradle.read_text()
-          g = re.sub(r'versionCode\s+\d+','versionCode 7',g)
-          g = re.sub(r'versionName\s+"[^"]+"','versionName "1.6"',g)
+          import os
+          version_code = os.environ['VERSION_CODE']
+          version_name = os.environ['VERSION_NAME']
+          if not version_code.isdecimal() or not 7 < int(version_code) <= 2100000000:
+              raise ValueError('version_code must be greater than 7 and at most 2100000000')
+          if not re.fullmatch(r'[0-9]+\.[0-9]+(?:\.[0-9]+)?', version_name):
+              raise ValueError('version_name must be numeric major.minor or major.minor.patch')
+          g = re.sub(r'versionCode\s+\d+', 'versionCode ' + version_code, g)
+          g = re.sub(r'versionName\s+"[^"]+"', 'versionName "' + version_name + '"', g)
           gradle.write_text(g)
           PY
           cp src/assets/lesbad-icon-clean.jpg android/app/src/main/res/drawable/lesbad_mobile_icon.jpg
@@ -78,15 +116,71 @@ jobs:
           grep -n "android:icon\|android:roundIcon" android/app/src/main/AndroidManifest.xml
           grep -n "app_name" android/app/src/main/res/values/strings.xml
 
-      - name: Build debug APK
+      - name: Restore release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing signing secret: $name"
+              exit 1
+            fi
+          done
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/android-release.jks"
+          test -s "$RUNNER_TEMP/android-release.jks"
+
+      - name: Configure release signing
+        run: python ../scripts/configure-android-release.py
+
+      - name: Build signed release APK and AAB
         working-directory: frontend/android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/android-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew --no-daemon assembleRelease bundleRelease
 
-      - name: Upload APK
+      - name: Verify and stage release artifacts
+        env:
+          VERSION_NAME: ${{ inputs.version_name }}
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          AAB=android/app/build/outputs/bundle/release/app-release.aab
+          test -s "$APK"
+          test -s "$AAB"
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          jarsigner -verify "$AAB"
+          python - "$AAB" <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as bundle:
+              names = bundle.namelist()
+              assert any(n.startswith('META-INF/') and n.endswith(('.RSA', '.DSA', '.EC')) for n in names), 'AAB signature missing'
+          PY
+          mkdir -p ../release
+          cp "$APK" "../release/LESBAD-Mobile-${VERSION_NAME}.apk"
+          cp "$AAB" "../release/LESBAD-Mobile-${VERSION_NAME}.aab"
+          cd ../release
+          sha256sum *.apk *.aab > SHA256SUMS.txt
+
+      - name: Upload signed release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lesbad-mobile-debug-apk
-          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          name: lesbad-mobile-release
+          path: release/*
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove temporary keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/android-release.jks"

@@ -4,3 +4,11 @@ frontend/dist/
 *.pyc
 __pycache__/
 .env
+
+# Android release signing material and local build output
+*.jks
+*.keystore
+keystore.properties
+key.properties
+release/
+frontend/android/
