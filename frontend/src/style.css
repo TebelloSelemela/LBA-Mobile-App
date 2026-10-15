@@ -5133,3 +5133,32 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
     padding:14px 16px!important;
   }
 }
+
+
+/* Tournament card edge spacing v1.0.12
+   Give the list, archive, creation form and detail cards breathing room
+   inside their panes. The tournament markup and workflow stay unchanged. */
+:root:not([data-theme="light"]) .tournament-list-panel.list-mode,
+:root:not([data-theme="light"]) .tournament-list-panel.create-mode{
+  box-sizing:border-box!important;
+  padding:12px 14px 16px!important;
+}
+:root:not([data-theme="light"]) .tournament-detail-panel{
+  box-sizing:border-box!important;
+  padding:12px 14px 18px!important;
+}
+:root:not([data-theme="light"]) .tournament-active-list{
+  min-width:0!important;
+  padding-right:5px!important;
+}
+:root:not([data-theme="light"]) .tournament-history-summary{
+  min-width:0!important;
+  padding-bottom:14px!important;
+}
+@media (max-width:700px){
+  :root:not([data-theme="light"]) .tournament-list-panel.list-mode,
+  :root:not([data-theme="light"]) .tournament-list-panel.create-mode,
+  :root:not([data-theme="light"]) .tournament-detail-panel{
+    padding:10px 12px 14px!important;
+  }
+}
