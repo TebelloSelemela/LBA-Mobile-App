@@ -2010,31 +2010,35 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           <span className="create-tournament-icon"><Trophy size={22}/></span>
           <div><h3>Create Tournament</h3><p>Set up a new badminton tournament</p></div>
         </div>
-        <Input label="Tournament name *" placeholder="Enter tournament name" value={form.name} onChange={v=>setForm({...form,name:v})}/>
-        <Input label="Tournament code (optional)" placeholder="e.g. OASIS-2026" value={form.tournament_code} onChange={v=>setForm({...form,tournament_code:v})}/>
-        <Input label="Venue *" placeholder="Enter venue name" value={form.venue} onChange={v=>setForm({...form,venue:v})}/>
-        <div className="form-row">
+
+        <div className="tournament-form-grid">
+          <Input label="Tournament name *" placeholder="Enter tournament name" value={form.name} onChange={v=>setForm({...form,name:v})}/>
+          <Input label="Tournament code (optional)" placeholder="e.g. OASIS-2026" value={form.tournament_code} onChange={v=>setForm({...form,tournament_code:v})}/>
+          <Input label="Venue *" placeholder="Enter venue name" value={form.venue} onChange={v=>setForm({...form,venue:v})}/>
+          <label><span>Scoring mode</span><select value={form.scoring_mode || '21'} onChange={e=>setForm({...form,scoring_mode:e.target.value})}><option value="21">3 × 21 points</option><option value="15">3 × 15 points</option></select></label>
+        </div>
+
+        <div className="form-row tournament-date-row">
           <Input label="Start date *" type="date" value={form.start_date} onChange={v=>setForm({...form,start_date:v})}/>
           <Input label="End date *" type="date" value={form.end_date} onChange={v=>setForm({...form,end_date:v})}/>
         </div>
-        <div className="form-row">
-          <label><span>Scoring mode</span><select value={form.scoring_mode || '21'} onChange={e=>setForm({...form,scoring_mode:e.target.value})}><option value="21">3 × 21 points</option><option value="15">3 × 15 points</option></select></label>
-          <div className="tournament-ranking-mode-field">
-            <span className="field-label">Ranking Points</span>
-            <div className="ranking-mode-choice-grid compact">
-              <button type="button" className={(form.ranking_mode || 'manual')==='manual'?'ranking-mode-choice selected':'ranking-mode-choice'} onClick={()=>setForm({...form,ranking_mode:'manual'})}>
-                <span className="ranking-choice-icon"><Trophy size={16}/></span>
-                <span className="ranking-choice-copy"><b>Manual</b><small>Manage ranking points manually</small></span>
-                <span className="mode-check">{(form.ranking_mode || 'manual')==='manual'?'✓':''}</span>
-              </button>
-              <button type="button" className={form.ranking_mode==='automatic'?'ranking-mode-choice selected automatic':'ranking-mode-choice automatic'} onClick={()=>setForm({...form,ranking_mode:'automatic'})}>
-                <span className="ranking-choice-icon"><Trophy size={16}/></span>
-                <span className="ranking-choice-copy"><b>Automatic</b><small>Auto-calculate ranking points</small></span>
-                <span className="mode-check">{form.ranking_mode==='automatic'?'✓':''}</span>
-              </button>
-            </div>
+
+        <div className="tournament-ranking-mode-field">
+          <span className="field-label">Ranking Points</span>
+          <div className="ranking-mode-choice-grid compact">
+            <button type="button" className={(form.ranking_mode || 'manual')==='manual'?'ranking-mode-choice selected':'ranking-mode-choice'} onClick={()=>setForm({...form,ranking_mode:'manual'})}>
+              <span className="ranking-choice-icon"><Trophy size={16}/></span>
+              <span className="ranking-choice-copy"><b>Manual</b><small>Add ranking points manually</small></span>
+              <span className="mode-check">{(form.ranking_mode || 'manual')==='manual'?'✓':''}</span>
+            </button>
+            <button type="button" className={form.ranking_mode==='automatic'?'ranking-mode-choice selected automatic':'ranking-mode-choice automatic'} onClick={()=>setForm({...form,ranking_mode:'automatic'})}>
+              <span className="ranking-choice-icon"><CheckCircle2 size={16}/></span>
+              <span className="ranking-choice-copy"><b>Automatic</b><small>Award configured round points automatically</small></span>
+              <span className="mode-check">{form.ranking_mode==='automatic'?'✓':''}</span>
+            </button>
           </div>
         </div>
+
         {form.ranking_mode==='automatic' && <div className="round-points-create">
           <div className="round-points-head"><b>Round Points</b><span className="badge green">Auto Capture Active</span></div>
           <div className="round-points-grid">
@@ -2047,17 +2051,28 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             <label><span>Champion</span><input type="number" min="0" step="1" value={form.ranking_rules.CHAMPION} onChange={e=>setForm({...form,ranking_rules:{...form.ranking_rules,CHAMPION:e.target.value}})}/></label>
           </div>
         </div>}
-        <button className="button" disabled={busy}><Plus size={16}/> Create Tournament</button>
+
+        <div className="tournament-create-actions">
+          <button type="button" className="button secondary clear-tournament-form" onClick={()=>setForm({name:'',tournament_code:'',venue:'',start_date:'',end_date:'',status:'Draft',scoring_mode:appSettings?.default_scoring_mode || '21',ranking_mode:'manual',ranking_rules:{R128:'0',R64:'0',R32:'0',R16:'0',QUARTERFINALIST:'0',SEMIFINALIST:'0',RUNNER_UP:'0',CHAMPION:'0'}})}><RefreshCw size={15}/> Clear</button>
+          <button className="button create-tournament-submit" disabled={busy}><Plus size={16}/> Create Tournament</button>
+        </div>
       </form>}
 
+      <div className="compact-section-heading active-tournament-heading">
+        <div><span className="eyebrow">ACTIVE</span><h3>Tournaments</h3></div>
+        <span className="section-count">{activeTournaments.length} active</span>
+      </div>
       <div className="draw-list tournament-active-list">
         {activeTournaments.map(t=>
           <div className={selectedId===t.id ? 'tournament-list-item selected' : 'tournament-list-item'} key={t.id}>
             <button type="button" className="draw-item tournament-select-button" onClick={()=>setSelectedId(t.id)}>
-              <b>{t.name}</b>
-              <small>{t.tournament_code} · {t.status} · {t.completed_matches || 0}/{t.total_matches || 0} matches complete</small>
-              <small>{t.scoring_mode==='15'?'3×15':'3×21'} · {t.ranking_mode==='automatic'?'Automatic':'Manual'}</small>
-              {t.start_date && <small>{t.start_date}{t.end_date && t.end_date!==t.start_date ? ' → '+t.end_date : ''}</small>}
+              <div className="tournament-card-top"><b>{t.name}</b><span className={'tournament-status-pill '+String(t.status || 'Draft').toLowerCase()}>{t.status || 'Draft'}</span></div>
+              <small className="tournament-card-code">{t.tournament_code}</small>
+              <div className="tournament-card-meta">
+                <span><CheckCircle2 size={12}/>{t.completed_matches || 0}/{t.total_matches || 0} complete</span>
+                <span><SettingsIcon size={12}/>{t.scoring_mode==='15'?'3×15':'3×21'} · {t.ranking_mode==='automatic'?'Automatic':'Manual'}</span>
+                {t.start_date && <span><CalendarDays size={12}/>{t.start_date}{t.end_date && t.end_date!==t.start_date ? ' → '+t.end_date : ''}</span>}
+              </div>
             </button>
             <button type="button" className="tournament-archive-button" onClick={()=>archiveTournament(t)} title="Archive tournament" aria-label={'Archive '+t.name}><Archive size={15}/></button>
           </div>
@@ -2067,8 +2082,8 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
 
       <div className="tournament-history-summary">
         <div className="history-heading">
-          <span className="eyebrow">ARCHIVE</span>
-          <h3>Tournament History</h3>
+          <div><span className="eyebrow">ARCHIVE</span><h3>Tournament History</h3></div>
+          <span className="section-count">{tournaments.filter(t => t.status === 'Completed' || Number(t.is_archived || 0)===1).length} archived</span>
         </div>
         {tournaments.filter(t => t.status === 'Completed' || Number(t.is_archived || 0)===1).map(t => {
           const h=historyDetails[t.id];
@@ -2076,7 +2091,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
           const ep=h?.event_podiums || {};
           const thirdPlayers=p.third_players || (p.third ? [p.third] : []);
           return <button className="history-card" key={'history-card-'+t.id} onClick={()=>setSelectedId(t.id)}>
-            <div className="history-card-title"><b>{t.name}</b><span>{Number(t.is_archived || 0)===1 ? 'Archived · ' : ''}{t.venue || 'Venue not recorded'}</span></div>
+            <div className="history-card-title"><div><b>{t.name}</b><small><MapPin size={11}/>{t.venue || 'Venue not recorded'}</small></div><span className="history-status-pill">{Number(t.is_archived || 0)===1 ? 'Archived' : 'Completed'}</span></div>
             {Object.keys(ep).length ? <div className="history-event-summary">
               {Object.entries(ep).map(([event,podium])=><div key={event}><b>{event}</b><span>1st: {podium.first || '—'}</span><span>2nd: {podium.second || '—'}</span><span>3rd: {podium.third || '—'}</span></div>)}
             </div> : <div className="history-card-grid">
