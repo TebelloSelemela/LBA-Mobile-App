@@ -5197,3 +5197,24 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   min-height:38px!important;
   height:38px!important;
 }
+
+
+/* ===============================================================
+   LESBAD readable typography v1.0.14
+   Font-only refinement: no card, colour, sizing, or workflow changes.
+   Use a familiar crisp Windows font for densely packed white UI text.
+   =============================================================== */
+:root:not([data-theme="light"]){
+  --lesbad-ui-font:"Arial","Segoe UI",sans-serif;
+  font-family:var(--lesbad-ui-font)!important;
+}
+:root:not([data-theme="light"]) .app-shell,
+:root:not([data-theme="light"]) .app-shell button,
+:root:not([data-theme="light"]) .app-shell input,
+:root:not([data-theme="light"]) .app-shell select,
+:root:not([data-theme="light"]) .app-shell textarea{
+  font-family:var(--lesbad-ui-font)!important;
+  font-kerning:normal;
+  text-rendering:optimizeLegibility;
+  -webkit-font-smoothing:antialiased;
+}
