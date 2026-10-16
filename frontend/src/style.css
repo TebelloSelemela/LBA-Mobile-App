@@ -5828,3 +5828,29 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
     align-items:flex-start!important;
   }
 }
+
+
+/* Tournament-only bracket viewport fit v1.0.20
+   Projector remains unchanged. The bracket gets a predictable viewing
+   height so fitted match columns and connectors stay compact and readable. */
+.tournament-bracket-workspace .bracket-scroll{
+  box-sizing:border-box!important;
+  height:clamp(420px,66vh,760px)!important;
+  max-height:calc(100vh - 85px)!important;
+  min-height:280px!important;
+  overflow-x:auto!important;
+  overflow-y:auto!important;
+  scrollbar-gutter:stable;
+}
+.tournament-bracket-workspace .bracket-zoom-shell{
+  position:relative;
+  margin-left:auto;
+  margin-right:auto;
+}
+@media(max-width:700px){
+  .tournament-bracket-workspace .bracket-scroll{
+    height:clamp(320px,58vh,540px)!important;
+    max-height:calc(100vh - 90px)!important;
+    min-height:240px!important;
+  }
+}

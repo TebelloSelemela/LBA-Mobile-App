@@ -1436,7 +1436,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const [savedDoublesTeams, setSavedDoublesTeams] = useState([]);
   const [tournamentPlayers, setTournamentPlayers] = useState(players);
   const [loadingDoublesTeams, setLoadingDoublesTeams] = useState(false);
-  const [bracketZoom, setBracketZoom] = useState(1);
+  const [bracketZoom, setBracketZoom] = useState(0.5);
   const [showCreate, setShowCreate] = useState(tournaments.length === 0);
   const [splitPct, setSplitPct] = useState(() => {
     const saved=Number(localStorage.getItem('lba_tournament_split') || 32);
@@ -1681,32 +1681,52 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     window.addEventListener('pointerup',stop);
   }
 
+  // Match the Projector bracket: fit within both viewport width and height,
+  // rather than scaling only by width and producing a huge vertical bracket.
+  function fittedBracketZoom(scroller) {
+    if (!bracketGeometry || !scroller) return 1;
+    const usableWidth=Math.max(240,scroller.clientWidth-30);
+    const usableHeight=Math.max(200,scroller.clientHeight-30);
+    const scale=Math.min(usableWidth/bracketGeometry.width,usableHeight/bracketGeometry.height,1);
+    return Math.max(0.28,Math.min(1.5,Math.floor(scale*100)/100));
+  }
+
   function fitBracket() {
     if (!bracketGeometry) return;
     window.requestAnimationFrame(() => {
       const scroller=document.querySelector('.tournament-bracket-workspace .bracket-scroll');
       if (!scroller) return;
-      const available=Math.max(260,scroller.clientWidth-24);
-      const next=Math.max(0.38,Math.min(1.5,available/bracketGeometry.width));
-      setBracketZoom(Math.round(next*100)/100);
-      scroller.scrollLeft=0;
-    });
-  }
-
-  // Like Projector mode, open each tournament/event with the whole path visible
-  // horizontally. Manual +/- zoom remains available after the initial fit.
-  useEffect(() => {
-    if (!bracketGeometry || !selectedId || !eventHasDraw) return;
-    const frame=window.requestAnimationFrame(() => {
-      const scroller=document.querySelector('.tournament-bracket-workspace .bracket-scroll');
-      if (!scroller) return;
-      const available=Math.max(260,scroller.clientWidth-24);
-      const next=Math.max(0.38,Math.min(1.5,available/bracketGeometry.width));
-      setBracketZoom(Math.round(next*100)/100);
+      setBracketZoom(fittedBracketZoom(scroller));
       scroller.scrollLeft=0;
       scroller.scrollTop=0;
     });
-    return () => window.cancelAnimationFrame(frame);
+  }
+
+  // Refit after selecting an event, opening a tournament, or resizing the
+  // bracket viewport. Manual zoom +/- and 100% still work independently.
+  useEffect(() => {
+    if (!bracketGeometry || !selectedId || !eventHasDraw) return;
+    const scroller=document.querySelector('.tournament-bracket-workspace .bracket-scroll');
+    if (!scroller) return;
+    let frame=0;
+    const update=() => {
+      if (frame) window.cancelAnimationFrame(frame);
+      frame=window.requestAnimationFrame(() => {
+        frame=0;
+        setBracketZoom(fittedBracketZoom(scroller));
+        scroller.scrollLeft=0;
+        scroller.scrollTop=0;
+      });
+    };
+    const observer=typeof ResizeObserver!=='undefined' ? new ResizeObserver(update) : null;
+    if (observer) observer.observe(scroller);
+    window.addEventListener('resize',update);
+    update();
+    return () => {
+      if (observer) observer.disconnect();
+      window.removeEventListener('resize',update);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, [bracketGeometry, selectedId, selectedEvent, eventHasDraw]);
 
   function changeBracketZoom(delta) {
