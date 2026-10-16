@@ -6,6 +6,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -54,3 +57,18 @@ jobs:
           name: lba-desktop-windows
           path: frontend/dist-electron/*.exe
           if-no-files-found: error
+
+      - name: Publish Windows EXE to GitHub Releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="v${VERSION}"
+          FILE="dist-electron/LBA-Tournament-Desktop-${VERSION}-x64.exe"
+          test -s "$FILE"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$FILE" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" "$FILE" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "LBA Admin System ${TAG} — Windows" --notes "Portable Windows x64 build. Download the .exe under Assets; no installation required."
+          fi
