@@ -31,6 +31,39 @@ async function saveBlob(blob, filename) {
   const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 500); return 'Download started.';
 }
 
+// Keep server/API failures readable; some gateways return nested JSON objects
+// instead of plain error strings (which otherwise display as "[object Object]").
+function readableApiMessage(value, fallback='Something went wrong. Please try again.') {
+  function extract(data, depth=0) {
+    if (depth>4 || data==null) return '';
+    if (typeof data==='string') {
+      const text=data.trim();
+      if (!text || text==='[object Object]' || /^<!doctype html|^<html[\s>]/i.test(text)) return '';
+      return text.length>320 ? text.slice(0,317)+'…' : text;
+    }
+    if (Array.isArray(data)) {
+      return data.map(item=>extract(item,depth+1)).filter(Boolean).slice(0,3).join('; ');
+    }
+    if (typeof data==='object') {
+      for (const key of ['message','error','detail','description','msg','reason','errors']) {
+        const result=extract(data[key],depth+1);
+        if (result) return result;
+      }
+    }
+    return '';
+  }
+  return extract(value) || fallback;
+}
+
+function apiFallbackForStatus(status) {
+  if (status===400 || status===422) return 'Please check the information entered and try again.';
+  if (status===401) return 'Sign-in failed. Check your username/email and password.';
+  if (status===403) return 'Access denied. Check whether your account has been verified by email.';
+  if (status===429) return 'Too many requests. Please wait a moment and try again.';
+  if (status>=500) return 'The LBA server encountered a problem. Please try again shortly.';
+  return 'Request failed (HTTP '+status+'). Please try again.';
+}
+
 async function api(path, options = {}) {
   const isFormData = options.body instanceof FormData;
   const headers = {
@@ -38,11 +71,22 @@ async function api(path, options = {}) {
     ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
     ...(options.headers || {})
   };
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  } catch (cause) {
+    const error=new Error('Unable to connect to the LBA server. Check your internet connection and try again.');
+    error.cause=cause;
+    throw error;
+  }
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  if (!res.ok) { const error = new Error(data?.error || data || `Request failed: ${res.status}`); error.status = res.status; throw error; }
+  if (!res.ok) {
+    const error = new Error(readableApiMessage(data,apiFallbackForStatus(res.status)));
+    error.status=res.status;
+    throw error;
+  }
   return data;
 }
 
@@ -269,7 +313,7 @@ function App() {
       });
       setAuthView('verify');
       setVerifyToken('');
-      setMessage(data?.message || 'A new verification token has been sent to your email.');
+      setMessage(readableApiMessage(data?.message,'A new verification token has been sent to your email.'));
     } catch (err) {
       setMessage(err.message || 'Could not resend the verification email.');
     }
@@ -284,7 +328,7 @@ function App() {
       });
       setAuthView('reset');
       setResetForm({ token: '', password: '', confirm_password: '' });
-      setMessage(data?.message || 'If that email exists, a reset token has been sent.');
+      setMessage(readableApiMessage(data?.message,'If that email exists, a reset token has been sent.'));
     } catch (err) {
       setMessage(err.message || 'Could not start password reset.');
     }
@@ -922,7 +966,7 @@ function AuthScreen({
         <div className="auth-links"><button type="button" onClick={() => setView('login')}>Back to login</button></div>
       </>}
 
-      <small className="auth-message">{message}</small>
+      <small className="auth-message" role="status">{readableApiMessage(message,'')}</small>
       {view === 'login' && <small className="auth-note">Accounts must be verified by email before first sign-in.</small>}
     </form>
   </div>;
