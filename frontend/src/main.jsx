@@ -495,10 +495,10 @@ function App() {
         {activeTab === "home" && <Overview dashboard={dashboard} players={players} draws={draws} setActiveTab={setActiveTab} exportFile={exportFile}/>} 
         {activeTab !== "home" && activeTab !== "tournaments" && <header className="hero">
           <div className="hero-copy"><div className="hero-brand"><img src={logo} alt="Lesotho Badminton Association logo" className="hero-logo" /><div><p className="eyebrow">Administration purposes</p><h2>Ranking Records & Random Draw Management</h2></div></div><p>Update records, add latest obtained points, select tournament participants and generate draws only for players who are attending.</p></div>
-          <div className="hero-actions">
-            <button className="button secondary" onClick={() => exportFile("/players/export.csv","lba_players.csv")}><Download size={16}/> Export CSV</button>
-            <button className="button secondary" onClick={() => exportFile("/players/export.xlsx","lba_players.xlsx")}><FileText size={16}/> Export Excel</button>
-            <label className="button"><Upload size={16}/> Import Excel<input type="file" accept=".xlsx,.xls" onChange={importExcel} hidden /></label>
+          <div className="hero-actions lba-file-actions">
+            <button className="button secondary lba-file-action" onClick={() => exportFile("/players/export.csv","lba_players.csv")}><Download size={16}/> Export CSV</button>
+            <button className="button secondary lba-file-action" onClick={() => exportFile("/players/export.xlsx","lba_players.xlsx")}><FileText size={16}/> Export Excel</button>
+            <label className="button lba-file-action lba-file-import"><Upload size={16}/> Import Excel<input type="file" accept=".xlsx,.xls" onChange={importExcel} hidden /></label>
           </div>
         </header>}
 
@@ -524,6 +524,95 @@ function App() {
   );
 }
 
+
+/* Shared knockout engine: Projector and Tournament views use the exact same
+   round ordering, standby cards, pairing connectors, and match display. */
+function buildKnockoutModel(sourceMatches, event, standbyPrefix) {
+  if (!sourceMatches?.length) return null;
+  const byRound = new Map();
+  sourceMatches.forEach(m => {
+    const rn=Number(m.round_number || 1);
+    if (!byRound.has(rn)) byRound.set(rn, []);
+    byRound.get(rn).push(m);
+  });
+  byRound.forEach(list=>list.sort((a,b)=>Number(a.match_no||0)-Number(b.match_no||0)));
+  const first=(byRound.get(1)||[]).filter(m=>!(m.stage==='Final' && Number(m.match_no)===3));
+  const firstCount=first.length;
+  if (!firstCount) return null;
+  const totalRounds=Math.floor(Math.log2(firstCount))+1;
+  const stageForSlots=slots=>({2:'Final',4:'Semifinal',8:'Quarterfinal',16:'Round of 16',32:'Round of 32',64:'Round of 64',128:'Round of 128'}[slots]||('Round of '+slots));
+  const columns=[];
+  for (let r=0;r<totalRounds;r++) {
+    const expected=Math.max(1,Math.floor(firstCount/(2**r)));
+    const actual=(byRound.get(r+1)||[]).filter(m=>!(m.stage==='Final'&&Number(m.match_no)===3));
+    const matches=Array.from({length:expected},(_,i)=>actual[i]?{...actual[i],virtual:false}:{
+      id:standbyPrefix+'-'+event+'-'+r+'-'+i,
+      match_no:i+1,
+      match_code:'STANDBY '+(i+1),
+      side_a:'Winner of previous match '+(i*2+1),
+      side_b:'Winner of previous match '+(i*2+2),
+      status:'Standby',
+      winner:null,
+      games:[],
+      virtual:true
+    });
+    columns.push({number:r+1,stage:stageForSlots(expected*2),matches});
+  }
+  return {firstCount,columns};
+}
+
+function buildKnockoutGeometry(model) {
+  if (!model) return null;
+  const colWidth=285,gap=100,unit=118,cardHeight=94,topOffset=54;
+  const width=model.columns.length*colWidth+Math.max(0,model.columns.length-1)*gap;
+  const height=Math.max(170,model.firstCount*unit)+topOffset;
+  const cardPosition=(roundIndex,matchIndex)=>{
+    const center=topOffset+(matchIndex+0.5)*(2**roundIndex)*unit;
+    return {x:roundIndex*(colWidth+gap),y:center-cardHeight/2,center};
+  };
+  const paths=[];
+  model.columns.slice(0,-1).forEach((column,r)=>{
+    column.matches.forEach((_,i)=>{
+      const from=cardPosition(r,i),to=cardPosition(r+1,Math.floor(i/2));
+      const x1=from.x+colWidth,x2=to.x,mid=x1+gap/2;
+      paths.push({key:r+'-'+i,d:'M '+x1+' '+from.center+' H '+mid+' V '+to.center+' H '+x2});
+    });
+  });
+  return {colWidth,gap,unit,cardHeight,topOffset,width,height,cardPosition,paths};
+}
+
+/* The same renderer powers the tournament workspace and Projector view.
+   Only the enclosing viewport and its theme-specific CSS differ. */
+function KnockoutBracketCanvas({model,geometry,zoom,variant}) {
+  const prefix=variant==='projector'?'projector-bracket':'bracket';
+  return <div className={prefix+'-zoom-shell'} style={{width:geometry.width*zoom,height:geometry.height*zoom}}>
+    <div className={prefix+'-canvas'} style={{width:geometry.width,height:geometry.height,transform:'scale('+zoom+')',transformOrigin:'top left'}}>
+      <svg className={prefix+'-connectors'} width={geometry.width} height={geometry.height} viewBox={'0 0 '+geometry.width+' '+geometry.height} aria-hidden="true">
+        {geometry.paths.map(p=><path key={p.key} d={p.d}/>)}
+      </svg>
+      {model.columns.map((column,r)=>{
+        const x=r*(geometry.colWidth+geometry.gap);
+        const completed=column.matches.filter(m=>m.status==='Completed').length;
+        return <React.Fragment key={prefix+'-column-'+r}>
+          <div className={prefix+'-stage-title'} style={{left:x,width:geometry.colWidth}}>
+            <b>{column.stage}</b><span>{completed}/{column.matches.length}</span>
+          </div>
+          {column.matches.map((m,i)=>{
+            const pos=geometry.cardPosition(r,i);
+            const scores=m.games?.length?m.games.map(g=>g.side_a_score+'-'+g.side_b_score).join(' · '):'';
+            const state=m.virtual?'standby':(m.status==='Completed'?'complete':(m.status==='In Progress'?'progress':'pending'));
+            return <div className={prefix+'-match '+state} style={{left:pos.x,top:pos.y,width:geometry.colWidth}} key={prefix+'-path-'+m.id}>
+              <small>{m.match_code||('M'+m.match_no)} · {m.virtual?'STANDBY':(m.status==='Completed'?'RESULT':(m.status==='In Progress'?'LIVE':'READY'))}</small>
+              <div className={m.winner===m.side_a?'winner':''}><span>{m.side_a}</span>{m.winner===m.side_a&&<b>✓</b>}</div>
+              <div className={m.winner===m.side_b?'winner':''}><span>{m.side_b}</span>{m.winner===m.side_b&&<b>✓</b>}</div>
+              {scores&&<em>{scores}</em>}
+            </div>;
+          })}
+        </React.Fragment>;
+      })}
+    </div>
+  </div>;
+}
 
 function ProjectorScreen({ draws, tournaments, refresh }) {
   const [selectedId, setSelectedId] = useState(draws[0]?.id || null);
@@ -583,67 +672,9 @@ function ProjectorScreen({ draws, tournaments, refresh }) {
     if (!draw) return null;
     const source=(tournamentDetail?.matches || matches || [])
       .filter(m => !tournamentDetail || (m.event_name || 'MS').toUpperCase() === eventName);
-    if (!source.length) return null;
-
-    const byRound={};
-    source.forEach(m => {
-      const rn=Number(m.round_number || 1);
-      if (!byRound[rn]) byRound[rn]=[];
-      byRound[rn].push(m);
-    });
-    Object.values(byRound).forEach(list=>list.sort((a,b)=>Number(a.match_no||0)-Number(b.match_no||0)));
-
-    const first=(byRound[1] || []).filter(m => !(m.stage==='Final' && Number(m.match_no)===3));
-    const firstCount=first.length;
-    if (!firstCount) return null;
-
-    const totalRounds=Math.floor(Math.log2(firstCount))+1;
-    const stageForSlots=slots=>({2:'Final',4:'Semifinal',8:'Quarterfinal',16:'Round of 16',32:'Round of 32',64:'Round of 64',128:'Round of 128'}[slots] || ('Round of '+slots));
-    const columns=[];
-
-    for(let r=0;r<totalRounds;r++){
-      const expected=Math.max(1,Math.floor(firstCount/(2**r)));
-      const actual=(byRound[r+1] || []).filter(m => !(m.stage==='Final' && Number(m.match_no)===3));
-      const stage=stageForSlots(expected*2);
-      const colMatches=Array.from({length:expected},(_,i)=>{
-        if(actual[i]) return {...actual[i],virtual:false};
-        return {
-          id:'projector-standby-'+eventName+'-'+r+'-'+i,
-          match_no:i+1,
-          match_code:'STANDBY '+(i+1),
-          side_a:'Winner of previous match '+(i*2+1),
-          side_b:'Winner of previous match '+(i*2+2),
-          status:'Standby',
-          winner:null,
-          games:[],
-          virtual:true
-        };
-      });
-      columns.push({number:r+1,stage,matches:colMatches});
-    }
-    return {firstCount,columns};
+    return buildKnockoutModel(source,eventName,'projector-standby');
   }, [draw, tournamentDetail, matches, eventName]);
-
-  const projectorBracketGeometry = useMemo(() => {
-    if (!projectorBracketModel) return null;
-    const colWidth=285, gap=100, unit=118, cardHeight=94, topOffset=54;
-    const width=projectorBracketModel.columns.length*colWidth + Math.max(0,projectorBracketModel.columns.length-1)*gap;
-    const height=Math.max(170,projectorBracketModel.firstCount*unit)+topOffset;
-    const cardPosition=(roundIndex,matchIndex)=>{
-      const center=topOffset+(matchIndex+0.5)*(2**roundIndex)*unit;
-      return {x:roundIndex*(colWidth+gap),y:center-cardHeight/2,center};
-    };
-    const paths=[];
-    projectorBracketModel.columns.slice(0,-1).forEach((column,r)=>{
-      column.matches.forEach((_,i)=>{
-        const from=cardPosition(r,i);
-        const to=cardPosition(r+1,Math.floor(i/2));
-        const x1=from.x+colWidth, x2=to.x, mid=x1+gap/2;
-        paths.push({key:'projector-'+r+'-'+i,d:'M '+x1+' '+from.center+' H '+mid+' V '+to.center+' H '+x2});
-      });
-    });
-    return {colWidth,gap,unit,cardHeight,topOffset,width,height,cardPosition,paths};
-  }, [projectorBracketModel]);
+  const projectorBracketGeometry = useMemo(() => buildKnockoutGeometry(projectorBracketModel), [projectorBracketModel]);
 
   async function toggleFullscreen() {
     try {
@@ -749,33 +780,7 @@ function ProjectorScreen({ draws, tournaments, refresh }) {
         {viewMode==='bracket' && <div className="projector-bracket-stage">
           {!projectorBracketModel || !projectorBracketGeometry ? <div className="projector-empty compact"><Trophy size={46}/><h2>Bracket unavailable</h2><p>This draw does not contain enough match information to build a bracket.</p></div> :
           <div className="projector-bracket-scroll">
-            <div className="projector-bracket-zoom-shell" style={{width:projectorBracketGeometry.width*projectorBracketZoom,height:projectorBracketGeometry.height*projectorBracketZoom}}>
-              <div className="projector-bracket-canvas" style={{width:projectorBracketGeometry.width,height:projectorBracketGeometry.height,transform:'scale('+projectorBracketZoom+')',transformOrigin:'top left'}}>
-                <svg className="projector-bracket-connectors" width={projectorBracketGeometry.width} height={projectorBracketGeometry.height} viewBox={'0 0 '+projectorBracketGeometry.width+' '+projectorBracketGeometry.height} aria-hidden="true">
-                  {projectorBracketGeometry.paths.map(p=><path key={p.key} d={p.d}/>)}
-                </svg>
-                {projectorBracketModel.columns.map((column,r)=>{
-                  const x=r*(projectorBracketGeometry.colWidth+projectorBracketGeometry.gap);
-                  const completed=column.matches.filter(m=>m.status==='Completed').length;
-                  return <React.Fragment key={'projector-column-'+r}>
-                    <div className="projector-bracket-stage-title" style={{left:x,width:projectorBracketGeometry.colWidth}}>
-                      <b>{column.stage}</b><span>{completed}/{column.matches.length}</span>
-                    </div>
-                    {column.matches.map((m,i)=>{
-                      const pos=projectorBracketGeometry.cardPosition(r,i);
-                      const scores=m.games?.length ? m.games.map(g=>g.side_a_score+'-'+g.side_b_score).join(' · ') : '';
-                      const state=m.virtual ? 'standby' : (m.status==='Completed' ? 'complete' : (m.status==='In Progress' ? 'progress' : 'pending'));
-                      return <div className={'projector-bracket-match '+state} style={{left:pos.x,top:pos.y,width:projectorBracketGeometry.colWidth}} key={'projector-path-'+m.id}>
-                        <small>{m.match_code || ('M'+m.match_no)} · {m.virtual ? 'STANDBY' : (m.status==='Completed' ? 'RESULT' : (m.status==='In Progress' ? 'LIVE' : 'READY'))}</small>
-                        <div className={m.winner===m.side_a?'winner':''}><span>{m.side_a}</span>{m.winner===m.side_a&&<b>✓</b>}</div>
-                        <div className={m.winner===m.side_b?'winner':''}><span>{m.side_b}</span>{m.winner===m.side_b&&<b>✓</b>}</div>
-                        {scores&&<em>{scores}</em>}
-                      </div>;
-                    })}
-                  </React.Fragment>;
-                })}
-              </div>
-            </div>
+            <KnockoutBracketCanvas model={projectorBracketModel} geometry={projectorBracketGeometry} zoom={projectorBracketZoom} variant="projector"/>
           </div>}
         </div>}
 
@@ -1644,59 +1649,11 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const eventPodiums = detail?.event_podiums || {};
 
   const bracketModel = useMemo(() => {
-    if (!eventHasDraw || !rounds.length || !rounds[0]?.matches?.length) return null;
-    const firstCount = rounds[0].matches.filter(m => !(m.stage === 'Final' && m.match_no === 3)).length;
-    if (!firstCount) return null;
-    const totalRounds = Math.floor(Math.log2(firstCount)) + 1;
-    const stageForSlots = slots => ({2:'Final',4:'Semifinal',8:'Quarterfinal',16:'Round of 16',32:'Round of 32',64:'Round of 64'}[slots] || ('Round of '+slots));
-    const columns = [];
-
-    for (let r=0; r<totalRounds; r++) {
-      const expectedMatches = Math.max(1, Math.floor(firstCount / (2 ** r)));
-      const actualRound = rounds.find(x => Number(x.number) === r + 1);
-      const actualMatches = (actualRound?.matches || []).filter(m => !(m.stage === 'Final' && m.match_no === 3));
-      const stage = stageForSlots(expectedMatches * 2);
-      const matches = Array.from({length: expectedMatches}, (_,i) => {
-        if (actualMatches[i]) return {...actualMatches[i], virtual:false};
-        return {
-          id:'standby-'+selectedEvent+'-'+r+'-'+i,
-          match_no:i+1,
-          match_code:'STANDBY '+(i+1),
-          side_a:'Winner of previous match '+(i*2+1),
-          side_b:'Winner of previous match '+(i*2+2),
-          status:'Standby',
-          winner:null,
-          games:[],
-          virtual:true
-        };
-      });
-      columns.push({number:r+1,stage,matches});
-    }
-    return {firstCount,columns};
-  }, [eventHasDraw, rounds, selectedEvent]);
-
-  const bracketGeometry = useMemo(() => {
-    if (!bracketModel) return null;
-    const colWidth=285, gap=100, unit=118, cardHeight=94, topOffset=54;
-    const width=bracketModel.columns.length*colWidth + Math.max(0,bracketModel.columns.length-1)*gap;
-    const height=Math.max(150,bracketModel.firstCount*unit) + topOffset;
-    const cardPosition=(roundIndex,matchIndex) => {
-      const center=topOffset + (matchIndex + 0.5) * (2 ** roundIndex) * unit;
-      return {x:roundIndex*(colWidth+gap), y:center-cardHeight/2, center};
-    };
-    const paths=[];
-    bracketModel.columns.slice(0,-1).forEach((column,r) => {
-      column.matches.forEach((_,i) => {
-        const from=cardPosition(r,i);
-        const to=cardPosition(r+1,Math.floor(i/2));
-        const x1=from.x+colWidth;
-        const x2=to.x;
-        const mid=x1+gap/2;
-        paths.push({key:r+'-'+i,d:'M '+x1+' '+from.center+' H '+mid+' V '+to.center+' H '+x2});
-      });
-    });
-    return {colWidth,gap,unit,cardHeight,topOffset,width,height,cardPosition,paths};
-  }, [bracketModel]);
+    if (!eventHasDraw) return null;
+    const source=(detail?.matches || []).filter(m => (m.event_name || 'MS').toUpperCase() === selectedEvent);
+    return buildKnockoutModel(source,selectedEvent,'standby');
+  }, [detail, selectedEvent, eventHasDraw]);
+  const bracketGeometry = useMemo(() => buildKnockoutGeometry(bracketModel), [bracketModel]);
 
   function startTournamentResize(e) {
     if (window.innerWidth <= 980) return;
@@ -2367,33 +2324,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
               </div>
             </div>
             {bracketModel && bracketGeometry && <div className="bracket-scroll">
-              <div className="bracket-zoom-shell" style={{width:bracketGeometry.width*bracketZoom,height:bracketGeometry.height*bracketZoom}}>
-              <div className="bracket-canvas" style={{width:bracketGeometry.width,height:bracketGeometry.height,transform:'scale('+bracketZoom+')',transformOrigin:'top left'}}>
-                <svg className="bracket-connectors" width={bracketGeometry.width} height={bracketGeometry.height} viewBox={'0 0 '+bracketGeometry.width+' '+bracketGeometry.height} aria-hidden="true">
-                  {bracketGeometry.paths.map(p=><path key={p.key} d={p.d}/>)}
-                </svg>
-                {bracketModel.columns.map((column,r) => {
-                  const x=r*(bracketGeometry.colWidth+bracketGeometry.gap);
-                  const completed=column.matches.filter(m=>m.status==='Completed').length;
-                  return <React.Fragment key={'bracket-column-'+r}>
-                    <div className="bracket-stage-title" style={{left:x,width:bracketGeometry.colWidth}}>
-                      <b>{column.stage}</b><span>{completed}/{column.matches.length}</span>
-                    </div>
-                    {column.matches.map((m,i) => {
-                      const pos=bracketGeometry.cardPosition(r,i);
-                      const scores=m.games?.length ? m.games.map(g=>g.side_a_score+'-'+g.side_b_score).join(' · ') : '';
-                      const state=m.virtual ? 'standby' : (m.status==='Completed' ? 'complete' : (m.status==='In Progress' ? 'progress' : 'pending'));
-                      return <div className={'bracket-match '+state} style={{left:pos.x,top:pos.y,width:bracketGeometry.colWidth}} key={'path-'+m.id}>
-                        <small>{m.match_code || ('M'+m.match_no)} · {m.virtual ? 'STANDBY' : (m.status==='Completed' ? 'RESULT' : (m.status==='In Progress' ? 'LIVE' : 'READY'))}</small>
-                        <div className={m.winner===m.side_a?'winner':''}><span>{m.side_a}</span>{m.winner===m.side_a&&<b>✓</b>}</div>
-                        <div className={m.winner===m.side_b?'winner':''}><span>{m.side_b}</span>{m.winner===m.side_b&&<b>✓</b>}</div>
-                        {scores&&<em>{scores}</em>}
-                      </div>;
-                    })}
-                  </React.Fragment>;
-                })}
-              </div>
-              </div>
+              <KnockoutBracketCanvas model={bracketModel} geometry={bracketGeometry} zoom={bracketZoom} variant="tournament"/>
             </div>}
           </div>
 

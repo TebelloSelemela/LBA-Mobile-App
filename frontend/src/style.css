@@ -5854,3 +5854,94 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
     min-height:240px!important;
   }
 }
+
+
+/* v1.0.22 — scoped professional records/draws header actions.
+   Identical height and icon/label alignment; no effect on exports. */
+.hero .lba-file-actions{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  align-items:stretch;
+  flex:0 0 auto;
+  width:min(100%,398px);
+  min-width:0;
+  gap:9px;
+  margin-left:18px;
+}
+.hero .lba-file-actions .lba-file-action{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex-wrap:nowrap;
+  gap:8px;
+  width:100%;
+  height:46px;
+  min-height:46px;
+  box-sizing:border-box;
+  padding:0 12px;
+  margin:0;
+  border-radius:12px;
+  font-family:inherit;
+  font-size:12px;
+  font-weight:750;
+  letter-spacing:0;
+  line-height:1;
+  white-space:nowrap;
+  text-align:center;
+  cursor:pointer;
+  user-select:none;
+  transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease;
+}
+.hero .lba-file-actions .lba-file-action svg{
+  flex:0 0 16px;
+  width:16px;
+  height:16px;
+  margin:0;
+}
+:root:not([data-theme="light"]) .hero .lba-file-actions .lba-file-action.secondary{
+  color:#e6f5ff;
+  border:1px solid rgba(145,198,222,.30);
+  background:linear-gradient(150deg,#153443,#102735);
+  box-shadow:inset 0 1px rgba(255,255,255,.055);
+}
+:root:not([data-theme="light"]) .hero .lba-file-actions .lba-file-import{
+  color:#052526;
+  border:1px solid rgba(130,253,220,.45);
+  background:linear-gradient(140deg,#32d4ad,#35cda9);
+  box-shadow:0 5px 16px rgba(25,182,144,.13);
+}
+.hero .lba-file-actions .lba-file-action:hover{
+  transform:translateY(-1px);
+  box-shadow:0 8px 22px rgba(0,0,0,.19);
+}
+:root:not([data-theme="light"]) .hero .lba-file-actions .lba-file-action.secondary:hover{
+  border-color:#7dd6ee;
+  background:#1a4053;
+}
+:root:not([data-theme="light"]) .hero .lba-file-actions .lba-file-import:hover{
+  background:#55e4c0;
+}
+.hero .lba-file-actions .lba-file-action:focus-visible,
+.hero .lba-file-actions .lba-file-action:focus-within{
+  outline:2px solid #9aeaf4;
+  outline-offset:3px;
+}
+@media(max-width:1180px){
+  .hero .lba-file-actions{
+    width:min(100%,398px);
+    margin-left:12px;
+  }
+}
+@media(max-width:1000px){
+  .hero .lba-file-actions{
+    margin:15px 0 0;
+    width:min(100%,420px);
+  }
+}
+@media(max-width:600px){
+  .hero .lba-file-actions{
+    grid-template-columns:1fr;
+    width:100%;
+    margin-top:15px;
+  }
+}
