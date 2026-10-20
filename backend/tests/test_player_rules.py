@@ -4,6 +4,7 @@ Pure rule tests intentionally avoid Flask startup / production credentials.
 They extract the implemented helpers from the actual backend source.
 """
 import ast
+import json
 import sqlite3
 import unittest
 import unicodedata
@@ -14,10 +15,12 @@ program = ast.parse(SOURCE.read_text(encoding="utf-8"))
 required = {
     "_player_name_keys", "_duplicate_player", "_player_duplicate_message",
     "_event_podium", "_tournament_event_podiums",
+    "_knockout_stage", "_backfill_completed_tournament_podiums",
 }
 nodes = [node for node in program.body if isinstance(node, ast.FunctionDef) and node.name in required]
 assert {n.name for n in nodes} == required, "Expected backend helpers are missing"
-namespace = {"unicodedata": unicodedata}
+namespace = {"unicodedata": unicodedata, "json": json,
+             "now_iso": lambda: "2026-10-20T12:00:00+02:00"}
 exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), "exec"), namespace)
 
 
@@ -123,6 +126,91 @@ class ThirdPlaceTests(unittest.TestCase):
         self.assertEqual(podiums["MS"]["third_players"],["Beth"])
         self.assertEqual(podiums["WS"]["third_players"],["Fifi","Hannah"])
         db.close()
+
+
+class LegacySevenMatchTournamentTests(unittest.TestCase):
+    """The real-world regression: 4 matches + 2 wrongly labelled + Final = 7."""
+    def setUp(self):
+        self.con = sqlite3.connect(":memory:")
+        self.con.row_factory = sqlite3.Row
+        self.con.executescript("""
+            CREATE TABLE tournaments(
+                id INTEGER PRIMARY KEY,status TEXT,winner_name TEXT,
+                runner_up_name TEXT,third_place_name TEXT,event_podiums TEXT,
+                finished_at TEXT);
+            CREATE TABLE tournament_audit(
+                tournament_id INTEGER,actor TEXT,action TEXT,details TEXT,created_at TEXT);
+            CREATE TABLE draws(
+                id INTEGER PRIMARY KEY,tournament_id INTEGER,
+                event_name TEXT,stage TEXT,round_number INTEGER);
+            CREATE TABLE draw_matches(
+                id INTEGER PRIMARY KEY,draw_id INTEGER,match_no INTEGER,
+                side_a TEXT,side_b TEXT,winner TEXT,status TEXT);
+        """)
+        self.con.execute(
+            "INSERT INTO tournaments VALUES(?,?,?,?,?,?,?)",
+            (11,"Completed","Alice","Claire",None,
+             json.dumps({"MS":{"first":"Alice","second":"Claire","third":None}}),
+             "2026-10-20T11:52:00+02:00")
+        )
+        self.con.executemany(
+            "INSERT INTO draws VALUES(?,?,?,?,?)",
+            [(1,11,"MS","Quarterfinal",1),
+             (2,11,"MS","Quarterfinal",2),  # Historical bug: actual semifinal
+             (3,11,"MS","Final",3)]
+        )
+        self.con.executemany(
+            "INSERT INTO draw_matches VALUES(?,?,?,?,?,?,?)",
+            [
+                (1,1,1,"Alice","Adele","Alice","Completed"),
+                (2,1,2,"Beth","Bokang","Beth","Completed"),
+                (3,1,3,"Claire","Celeste","Claire","Completed"),
+                (4,1,4,"Dineo","Daisy","Dineo","Completed"),
+                (5,2,1,"Alice","Beth","Alice","Completed"),
+                (6,2,2,"Claire","Dineo","Claire","Completed"),
+                (7,3,1,"Alice","Claire","Alice","Completed"),
+            ]
+        )
+
+    def tearDown(self):
+        self.con.close()
+
+    def test_new_round_stage_uses_entrants_not_match_count(self):
+        self.assertEqual(namespace["_knockout_stage"](4), "Semifinal")
+        self.assertEqual(namespace["_knockout_stage"](8), "Quarterfinal")
+        self.assertEqual(namespace["_knockout_stage"](2), "Final")
+        self.assertEqual(namespace["_knockout_stage"](16), "Round of 16")
+
+    def test_legacy_seven_completed_matches_now_show_both_third_places(self):
+        podiums = namespace["_tournament_event_podiums"](self.con, 11)
+        self.assertEqual(podiums["MS"]["first"],"Alice")
+        self.assertEqual(podiums["MS"]["second"],"Claire")
+        self.assertEqual(podiums["MS"]["third_players"],["Beth","Dineo"])
+        self.assertEqual(podiums["MS"]["third"],"Beth & Dineo")
+
+    def test_migration_repairs_saved_archive_without_touching_results(self):
+        n = namespace["_backfill_completed_tournament_podiums"](self.con)
+        self.assertEqual(n,1)
+        row=self.con.execute("SELECT * FROM tournaments WHERE id=11").fetchone()
+        self.assertEqual(row["third_place_name"],"Beth & Dineo")
+        self.assertEqual(json.loads(row["event_podiums"])["MS"]["third"],"Beth & Dineo")
+        self.assertEqual(row["finished_at"],"2026-10-20T11:52:00+02:00")
+        self.assertEqual(row["status"],"Completed")
+        self.assertEqual(
+            self.con.execute("SELECT COUNT(*) FROM draw_matches").fetchone()[0],7
+        )
+        action=self.con.execute("SELECT action FROM tournament_audit").fetchone()[0]
+        self.assertEqual(action,"PODIUM_RECONCILED")
+        self.assertEqual(namespace["_backfill_completed_tournament_podiums"](self.con),0)
+
+    def test_completed_bronze_overrides_joint_third_after_migration(self):
+        self.con.execute("INSERT INTO draw_matches VALUES(?,?,?,?,?,?,?)",
+                         (8,3,3,"Beth","Dineo","Beth","Completed"))
+        podiums=namespace["_tournament_event_podiums"](self.con,11)
+        self.assertEqual(podiums["MS"]["third_players"],["Beth"])
+        self.assertEqual(namespace["_backfill_completed_tournament_podiums"](self.con),1)
+        self.assertEqual(self.con.execute(
+            "SELECT third_place_name FROM tournaments WHERE id=11").fetchone()[0],"Beth")
 
 
 if __name__ == "__main__":

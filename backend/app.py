@@ -1167,7 +1167,7 @@ def create_app():
             if not fixtures:
                 return jsonify({"error":"This event needs at least two complete entrants/teams. Doubles requires complete pairs."}),400
             slots=len(fixtures)*2
-            stage={2:"Final",4:"Semifinal",8:"Quarterfinal",16:"Round of 16",32:"Round of 32",64:"Round of 64"}.get(slots,f"Round of {slots}")
+            stage=_knockout_stage(slots)
             round_name=stage
             now=now_iso()
             cur=con.execute("""INSERT INTO draws(title,category_code,draw_type,created_at,tournament_id,event_name,round_name,round_number,stage,created_by)
@@ -1486,12 +1486,9 @@ def create_app():
                 return jsonify({"error":"There is no second opponent available. The current winner is the tournament champion."}),400
 
             round_number=int(latest["round_number"] or 1)+1
-            if len(winners)==2:
-                stage="Final"
-            else:
-                slots=1
-                while slots < len(winners): slots*=2
-                stage={2:"Semifinal",4:"Quarterfinal",8:"Round of 16",16:"Round of 32",32:"Round of 64"}.get(slots,f"Round of {slots}")
+            # This round has len(winners) entrants (not len(winners) matches).
+            # Four entrants form a Semifinal, not a Quarterfinal.
+            stage=_knockout_stage(len(winners))
             title=f"{t['name']} — {stage}"
             event_name=data.get("event_name") or latest["event_name"] or "Singles"
             draw_type=data.get("draw_type") or latest["draw_type"] or "Singles"
@@ -1519,7 +1516,7 @@ def create_app():
 
             # When the current stage is a true two-match semifinal, create the
             # bronze match from the two semifinal losers alongside the final.
-            if latest["stage"]=="Semifinal" and len(losers)==2 and len(winners)==2:
+            if stage=="Final" and len(matches)==2 and len(losers)==2 and len(winners)==2:
                 code=f"LBA-{tournament_id:02d}-{draw_id:03d}-003"
                 a,b=losers
                 con.execute("""INSERT INTO draw_matches(draw_id,match_no,side_a,side_b,side_a_player_ids,side_b_player_ids,status,match_code)
@@ -2236,6 +2233,9 @@ def ensure_database():
                        COALESCE(total_points,0), COALESCE(tournaments_played,0), 'Active', ?, ?
                 FROM combined_rankings
             """, (now, now))
+        # Repair official third-place records from existing completed matches.
+        # Only medal fields/audit are updated; scores, rankings, and dates remain.
+        _backfill_completed_tournament_podiums(con)
         con.commit()
 
 
@@ -2283,6 +2283,18 @@ def _player_duplicate_message(player):
     )
 
 
+def _knockout_stage(entrants):
+    """Stage is determined by players/teams entering the round, not its match count."""
+    slots = 1
+    while slots < max(2, int(entrants)):
+        slots *= 2
+    return {
+        2: "Final", 4: "Semifinal", 8: "Quarterfinal",
+        16: "Round of 16", 32: "Round of 32",
+        64: "Round of 64", 128: "Round of 128"
+    }.get(slots, f"Round of {slots}")
+
+
 def _event_podium(matches):
     """Bronze winner wins sole third place; otherwise both semifinal losers tie."""
     final = next((m for m in matches if
@@ -2297,9 +2309,21 @@ def _event_podium(matches):
     if bronze:
         third_players = [bronze["winner"]]
     else:
-        for m in matches:
-            if str(m.get("stage") or "").lower() != "semifinal":
-                continue
+        # For historical tournaments, the old next-round generator incorrectly
+        # labelled a TWO-match semifinal round "Quarterfinal". Determine the
+        # feeder round from its position immediately before the Final.
+        # Never rewrite historical match results or force matches to be replayed.
+        semis = [m for m in matches if str(m.get("stage") or "").lower() == "semifinal"]
+        if final and final.get("round_number") is not None:
+            previous_round = int(final["round_number"]) - 1
+            feeders = [
+                m for m in matches
+                if int(m.get("round_number") or -1) == previous_round
+                and int(m.get("match_no") or 0) != 3
+            ]
+            if len(feeders) == 2:
+                semis = feeders
+        for m in semis:
             if m.get("status") != "Completed" or m.get("side_b") == "Bye":
                 continue
             winner = m.get("winner")
@@ -2324,7 +2348,7 @@ def _event_podium(matches):
 def _tournament_event_podiums(con, tournament_id):
     """Compute each event separately; never mix MS/WS/doubles medalists."""
     matches = con.execute("""
-        SELECT dm.*,d.stage,UPPER(COALESCE(NULLIF(d.event_name,''),'MS')) AS event_name
+        SELECT dm.*,d.stage,d.round_number,UPPER(COALESCE(NULLIF(d.event_name,''),'MS')) AS event_name
         FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
         WHERE d.tournament_id=?
         ORDER BY d.event_name,d.round_number,dm.match_no,dm.id
@@ -2334,6 +2358,42 @@ def _tournament_event_podiums(con, tournament_id):
         m = dict(row)
         by_event.setdefault(m["event_name"], []).append(m)
     return {event: _event_podium(rows) for event, rows in by_event.items()}
+
+
+def _backfill_completed_tournament_podiums(con):
+    """Reconcile stored podiums for completed legacy draws, without touching scores."""
+    rows = con.execute(
+        "SELECT id,third_place_name,event_podiums FROM tournaments WHERE status='Completed'"
+    ).fetchall()
+    updated = 0
+    for tournament in rows:
+        podiums = _tournament_event_podiums(con, tournament["id"])
+        calculated = {event: placement for event,placement in podiums.items() if placement["first"]}
+        if not calculated:
+            continue
+        try:
+            stored = json.loads(tournament["event_podiums"] or "{}")
+            if not isinstance(stored, dict):
+                stored = {}
+        except (TypeError, ValueError):
+            stored = {}
+        merged = {**stored, **calculated}
+        third = next(iter(calculated.values()))["third"] if len(calculated)==1 else "See event podiums"
+        if (third or "") == (tournament["third_place_name"] or "") and merged == stored:
+            continue
+        con.execute(
+            "UPDATE tournaments SET third_place_name=?, event_podiums=? WHERE id=?",
+            (third, json.dumps(merged, separators=(",", ":")), tournament["id"])
+        )
+        con.execute(
+            """INSERT INTO tournament_audit(tournament_id,actor,action,details,created_at)
+               VALUES(?,?,?,?,?)""",
+            (tournament["id"], "SYSTEM", "PODIUM_RECONCILED",
+             json.dumps({"third_place":third,"reason":"Correct legacy semifinal round labels"},
+                        separators=(",",":")), now_iso())
+        )
+        updated += 1
+    return updated
 
 
 def parse_date_of_birth(value):
