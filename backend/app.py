@@ -5,12 +5,13 @@ import secrets
 import smtplib
 from email.message import EmailMessage
 import sqlite3
+import unicodedata
 import re
 import hashlib
 import json
 import urllib.request
 import urllib.error
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from functools import wraps
@@ -832,6 +833,10 @@ def create_app():
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         with db() as con:
+            con.execute("BEGIN IMMEDIATE")
+            duplicate = _duplicate_player(con, payload)
+            if duplicate:
+                return jsonify({"error": _player_duplicate_message(duplicate), "existing_player_id": duplicate["id"]}), 409
             cur = con.execute("""
                 INSERT INTO players(category_code,event_type,gender,age_group,date_of_birth,club,rank_position,first_name,last_name,full_name,total_points,tournaments_played,status,registration_scope,notes,created_at,updated_at)
                 VALUES(:category_code,:event_type,:gender,:age_group,:date_of_birth,:club,:rank_position,:first_name,:last_name,:full_name,:total_points,:tournaments_played,:status,:registration_scope,:notes,:created_at,:updated_at)
@@ -858,6 +863,13 @@ def create_app():
             except ValueError as exc:
                 return jsonify({"error": str(exc)}), 400
             payload["id"] = player_id
+            con.execute("BEGIN IMMEDIATE")
+            old_identity = (_player_name_keys(dict(found)), str(found["date_of_birth"] or "").strip())
+            new_identity = (_player_name_keys(payload), str(payload["date_of_birth"] or "").strip())
+            if old_identity != new_identity:
+                duplicate = _duplicate_player(con, payload, exclude_id=player_id)
+                if duplicate:
+                    return jsonify({"error": _player_duplicate_message(duplicate), "existing_player_id": duplicate["id"]}), 409
 
             con.execute("""
                 UPDATE players SET
@@ -1346,33 +1358,29 @@ def create_app():
                 md["games"]=[dict(x) for x in games]
                 data["matches"].append(md)
 
-            # Podium is computed from recorded knockout results and is also
-            # persisted when the administrator declares the tournament finished.
-            final=next((m for m in data["matches"] if m.get("stage")=="Final" and m.get("status")=="Completed"),None)
-            third=next((m for m in data["matches"] if m.get("stage")=="Final" and m.get("match_no")==3 and m.get("status")=="Completed"),None)
-            podium={"first":data.get("winner_name"),"second":data.get("runner_up_name"),"third":data.get("third_place_name"),"third_players":[]}
-            if final:
-                podium["first"]=final.get("winner")
-                podium["second"]=final.get("side_b") if final.get("winner")==final.get("side_a") else final.get("side_a")
-            semis=[m for m in data["matches"] if m.get("stage")=="Semifinal" and m.get("status")=="Completed" and m.get("side_b")!="Bye"]
-            if third:
-                podium["third"]=third.get("winner")
-                podium["third_players"]=[third.get("winner")]
-            elif semis:
-                losers=[]
-                for s in semis:
-                    if s.get("winner")==s.get("side_a"):
-                        losers.append(s.get("side_b"))
-                    else:
-                        losers.append(s.get("side_a"))
-                podium["third_players"]=[x for x in losers if x]
-                if len(podium["third_players"])==1:
-                    podium["third"]=podium["third_players"][0]
-            data["podium"]=podium
+            # Recompute medal placements from each event's own recorded results.
+            # A completed bronze fixture takes precedence over tied semifinalists.
             try:
-                data["event_podiums"]=json.loads(data.get("event_podiums") or "{}")
-            except Exception:
-                data["event_podiums"]={}
+                stored_podiums = json.loads(data.get("event_podiums") or "{}")
+            except (TypeError, ValueError):
+                stored_podiums = {}
+            event_podiums = _tournament_event_podiums(con, tournament_id)
+            data["event_podiums"] = {
+                **stored_podiums,
+                **{event: podium for event,podium in event_podiums.items()
+                   if podium["first"] or podium["second"] or podium["third"]}
+            }
+            legacy = {"first":data.get("winner_name"),"second":data.get("runner_up_name"),
+                      "third":data.get("third_place_name"),"third_players":[]}
+            if len(event_podiums) == 1:
+                only_podium = next(iter(event_podiums.values()))
+                data["podium"] = {
+                    key: only_podium[key] or legacy.get(key)
+                    for key in ("first","second","third")
+                }
+                data["podium"]["third_players"] = only_podium["third_players"]
+            else:
+                data["podium"] = legacy
             data["ranking_rules"]={str(r["placement_code"]).upper():float(r["points"] or 0) for r in con.execute(
                 "SELECT placement_code,points FROM tournament_ranking_rules WHERE tournament_id=?",(tournament_id,)
             ).fetchall()}
@@ -1537,29 +1545,18 @@ def create_app():
             event_rows=con.execute("SELECT DISTINCT COALESCE(NULLIF(event_name,''),'MS') AS event_name FROM draws WHERE tournament_id=? ORDER BY event_name",(tournament_id,)).fetchall()
             if not event_rows:return jsonify({"error":"Generate at least one event draw before finishing the tournament."}),400
 
-            event_podiums={}
-            missing=[]
+            computed = _tournament_event_podiums(con, tournament_id)
+            event_podiums = {}
+            missing = []
             for er in event_rows:
-                event_name=er["event_name"]
-                final=con.execute("SELECT dm.* FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? AND UPPER(COALESCE(d.event_name,'MS'))=? AND d.stage='Final' AND dm.status='Completed' ORDER BY d.round_number DESC,dm.id DESC LIMIT 1",(tournament_id,event_name.upper())).fetchone()
-                if not final:
+                event_name = er["event_name"]
+                placement = computed.get(event_name.upper())
+                if not placement or not placement["first"]:
                     missing.append(event_name)
                     continue
-
-                third=con.execute("SELECT dm.* FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? AND UPPER(COALESCE(d.event_name,'MS'))=? AND d.stage='Final' AND dm.match_no=3 AND dm.status='Completed' ORDER BY d.round_number DESC,dm.id DESC LIMIT 1",(tournament_id,event_name.upper())).fetchone()
-                third_name=third["winner"] if third else None
-
-                if not third_name:
-                    semis=con.execute("SELECT dm.* FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id WHERE d.tournament_id=? AND UPPER(COALESCE(d.event_name,'MS'))=? AND d.stage='Semifinal' AND dm.status='Completed' AND dm.side_b!='Bye' ORDER BY d.round_number DESC,dm.id",(tournament_id,event_name.upper())).fetchall()
-                    if len(semis)==1:
-                        s=semis[0]
-                        third_name=s["side_b"] if s["winner"]==s["side_a"] else s["side_a"]
-                    elif len(semis)>=2:
-                        losers=[s["side_b"] if s["winner"]==s["side_a"] else s["side_a"] for s in semis[:2]]
-                        third_name=" & ".join([z for z in losers if z])
-
-                runner=final["side_b"] if final["winner"]==final["side_a"] else final["side_a"]
-                event_podiums[event_name]={"first":final["winner"],"second":runner,"third":third_name}
+                # Bronze fixtures are optional: without a played fixture the
+                # two semifinal losers share third place.
+                event_podiums[event_name] = placement
 
             if missing:
                 return jsonify({"error":"Every event draw must have a completed final before the tournament can be declared finished.","events_pending":missing,"completed_events":sorted(event_podiums.keys())}),400
@@ -1715,6 +1712,17 @@ def create_app():
                 con.execute("UPDATE tournaments SET status='Live',updated_at=? WHERE id=? AND status!='Completed'",(now,m["tournament_id"]))
                 if completed:
                     ranking_result=apply_automatic_ranking_points(con,m["tournament_id"],g.current_user["username"])
+                finished = con.execute("SELECT status FROM tournaments WHERE id=?",(m["tournament_id"],)).fetchone()
+                if finished and finished["status"]=="Completed":
+                    # Capture of an optional bronze result after closure must
+                    # also update the saved official podium without reopening
+                    # the tournament or changing the original finish metadata.
+                    updated_podiums=_tournament_event_podiums(con,m["tournament_id"])
+                    relevant={k:v for k,v in updated_podiums.items() if v["first"]}
+                    if relevant:
+                        third_name=next(iter(relevant.values()))["third"] if len(relevant)==1 else "See event podiums"
+                        con.execute("UPDATE tournaments SET third_place_name=?,event_podiums=?,updated_at=? WHERE id=?",
+                                    (third_name,json.dumps(relevant,separators=(",",":")),now,m["tournament_id"]))
             con.commit()
             result={
                 "match_id":match_id,
@@ -2231,6 +2239,103 @@ def ensure_database():
         con.commit()
 
 
+def _player_name_keys(data):
+    """Compare names ignoring case, Unicode formatting and repeated spaces."""
+    names = (data.get("full_name"), " ".join(filter(None, (
+        str(data.get("first_name") or "").strip(),
+        str(data.get("last_name") or "").strip()
+    ))))
+    return {
+        " ".join(unicodedata.normalize("NFKC", str(name or "")).casefold().split())
+        for name in names if str(name or "").strip()
+    }
+
+
+def _duplicate_player(con, payload, exclude_id=None):
+    """Return an existing matching player; caller holds a write transaction.
+
+    A known DOB requires a matching DOB. Imports without DOB are conservative:
+    a matching name is skipped because the birth date cannot distinguish it.
+    """
+    name_keys = _player_name_keys(payload)
+    dob = str(payload.get("date_of_birth") or "").strip()
+    if not name_keys:
+        return None
+    rows = con.execute(
+        "SELECT id,full_name,first_name,last_name,date_of_birth FROM players"
+    ).fetchall()
+    for row in rows:
+        if exclude_id is not None and int(row["id"]) == int(exclude_id):
+            continue
+        if not name_keys.intersection(_player_name_keys(dict(row))):
+            continue
+        existing_dob = str(row["date_of_birth"] or "").strip()
+        if not dob or not existing_dob or existing_dob == dob:
+            return row
+    return None
+
+
+def _player_duplicate_message(player):
+    return (
+        f"Player already registered: {player['full_name']} (record #{player['id']}). "
+        "A matching name and date of birth already exist, or an older record "
+        "has no DOB. Update the existing player record instead."
+    )
+
+
+def _event_podium(matches):
+    """Bronze winner wins sole third place; otherwise both semifinal losers tie."""
+    final = next((m for m in matches if
+                  str(m.get("stage") or "").lower() == "final"
+                  and int(m.get("match_no") or 0) != 3
+                  and m.get("status") == "Completed" and m.get("winner")), None)
+    bronze = next((m for m in matches if
+                   str(m.get("stage") or "").lower() == "final"
+                   and int(m.get("match_no") or 0) == 3
+                   and m.get("status") == "Completed" and m.get("winner")), None)
+    third_players = []
+    if bronze:
+        third_players = [bronze["winner"]]
+    else:
+        for m in matches:
+            if str(m.get("stage") or "").lower() != "semifinal":
+                continue
+            if m.get("status") != "Completed" or m.get("side_b") == "Bye":
+                continue
+            winner = m.get("winner")
+            loser = m.get("side_b") if winner == m.get("side_a") else (
+                m.get("side_a") if winner == m.get("side_b") else None
+            )
+            if loser and loser not in third_players:
+                third_players.append(loser)
+            if len(third_players) == 2:
+                break
+    runner = None
+    if final:
+        runner = final.get("side_b") if final["winner"] == final.get("side_a") else final.get("side_a")
+    return {
+        "first": final["winner"] if final else None,
+        "second": runner,
+        "third": " & ".join(third_players) if third_players else None,
+        "third_players": third_players,
+    }
+
+
+def _tournament_event_podiums(con, tournament_id):
+    """Compute each event separately; never mix MS/WS/doubles medalists."""
+    matches = con.execute("""
+        SELECT dm.*,d.stage,UPPER(COALESCE(NULLIF(d.event_name,''),'MS')) AS event_name
+        FROM draw_matches dm JOIN draws d ON d.id=dm.draw_id
+        WHERE d.tournament_id=?
+        ORDER BY d.event_name,d.round_number,dm.match_no,dm.id
+    """, (tournament_id,)).fetchall()
+    by_event = {}
+    for row in matches:
+        m = dict(row)
+        by_event.setdefault(m["event_name"], []).append(m)
+    return {event: _event_podium(rows) for event, rows in by_event.items()}
+
+
 def parse_date_of_birth(value):
     text = str(value or "").strip()
     if not text:
@@ -2600,7 +2705,8 @@ def apply_automatic_ranking_points(con,tournament_id,actor="SYSTEM"):
     completed_rounds=[]
     waiting_rounds=[]
     for (event,round_number,stage),matches in sorted(grouped.items(),key=lambda item:(item[0][0],item[0][1])):
-        real_matches=[m for m in matches if m.get("side_b")!="Bye"]
+        real_matches=[m for m in matches if m.get("side_b")!="Bye"
+                      and not (str(stage).upper()=="FINAL" and int(m.get("match_no") or 0)==3)]
         if not real_matches:
             continue
         if not all(str(m.get("status") or "")=="Completed" and m.get("winner") for m in real_matches):
@@ -3313,6 +3419,7 @@ def import_workbook(file_storage):
     now = now_iso()
 
     with db() as con:
+        con.execute("BEGIN IMMEDIATE")
         for sheet in wb.worksheets:
             rows = list(sheet.iter_rows(values_only=True))
             if not rows:
@@ -3401,31 +3508,43 @@ def import_workbook(file_storage):
                     "event_category"
                 ) or category_from_sheet).strip()
 
-                payload = clean_player_payload({
-                    "full_name": full_name,
-                    "first_name": first,
-                    "last_name": last,
-                    "category_code": category,
-                    "gender": get_value(record, "gender"),
-                    "age_group": get_value(record, "age_group"),
-                    "event_type": get_value(record, "event_type"),
-                    "club": get_value(record, "club"),
-                    "rank_position": rank,
-                    "total_points": total_points,
-                    "tournaments_played": tournaments_played,
-                    "status": "Active",
-                    "notes": f"Imported from {sheet.title}",
-                })
-
+                raw_dob = get_value(record, "date_of_birth", "dob", "birth_date")
+                if isinstance(raw_dob, (datetime, date)):
+                    raw_dob = raw_dob.strftime("%Y-%m-%d")
+                try:
+                    payload = clean_player_payload({
+                        "date_of_birth": raw_dob,
+                        "full_name": full_name,
+                        "first_name": first,
+                        "last_name": last,
+                        "category_code": category,
+                        "gender": get_value(record, "gender"),
+                        "age_group": get_value(record, "age_group"),
+                        "event_type": get_value(record, "event_type"),
+                        "club": get_value(record, "club"),
+                        "rank_position": rank,
+                        "total_points": total_points,
+                        "tournaments_played": tournaments_played,
+                        "status": "Active",
+                        "notes": f"Imported from {sheet.title}",
+                    })
+                except ValueError:
+                    skipped += 1
+                    continue
+                # Older ranking sheets may omit DOB. In that case, matching
+                # names are skipped rather than creating ambiguous duplicates.
+                if _duplicate_player(con, payload):
+                    skipped += 1
+                    continue
                 con.execute("""
                     INSERT INTO players(
-                        category_code,event_type,gender,age_group,club,
+                        category_code,event_type,gender,age_group,date_of_birth,club,
                         rank_position,first_name,last_name,full_name,
                         total_points,tournaments_played,status,notes,
                         created_at,updated_at
                     )
                     VALUES(
-                        :category_code,:event_type,:gender,:age_group,:club,
+                        :category_code,:event_type,:gender,:age_group,:date_of_birth,:club,
                         :rank_position,:first_name,:last_name,:full_name,
                         :total_points,:tournaments_played,:status,:notes,
                         :created_at,:updated_at

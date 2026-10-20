@@ -1641,7 +1641,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
       const matches = (detail?.matches || []).filter(m => (m.event_name || 'MS').toUpperCase() === event);
       const final = matches.find(m => m.stage === 'Final' && m.match_no !== 3);
       const bronze = matches.find(m => m.stage === 'Final' && m.match_no === 3);
-      return {event, ready: !!final && final.status === 'Completed' && (!bronze || bronze.status === 'Completed'), final, bronze};
+      return {event, ready: !!final && final.status === 'Completed', final, bronze};
     });
   }, [detail]);
   const readyToFinish = eventReadiness.length > 0 && eventReadiness.every(x => x.ready);
@@ -1976,7 +1976,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     if (!selectedId) return;
     if (!readyToFinish) {
       const pending = eventReadiness.filter(x => !x.ready).map(x => x.event).join(', ');
-      setMessage('Complete the final (and any third-place match) for every event before declaring the tournament finished. Pending: '+pending+'.');
+      setMessage('Complete the final for every event before declaring the tournament finished. Pending: '+pending+'.');
       return;
     }
     if (!confirm('Declare this tournament officially finished? This will record the final podium and completion time.')) return;
@@ -2358,7 +2358,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             </div>
           </section>)}
 
-          {finalMatch?.status === 'Completed' && thirdMatch?.status !== 'Completed' && <div className="message">Final recorded. Complete the third-place match before declaring the tournament finished.</div>}
+          {finalMatch?.status === 'Completed' && thirdMatch?.status !== 'Completed' && <div className="message">Final recorded. The third-place match is optional: record its result for a sole third-place winner, or finish with both semifinal losers sharing third.</div>}
           {detail.status === 'Completed' && <div className="message">This tournament is officially closed. The podium and complete history are preserved below.</div>}
 
           <section className="tournament-round-history">
