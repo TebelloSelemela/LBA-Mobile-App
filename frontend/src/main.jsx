@@ -486,7 +486,7 @@ function App() {
       <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
         <div className="brand"><img src={logo} alt="Lesotho Badminton Association logo" className="brand-logo" /><div><h1>Badminton Admin</h1><p>Lesotho Badminton Association</p></div><button className="close-menu" onClick={() => setMenuOpen(false)}><X size={20}/></button></div>
         {[
-          ['home','Overview',Home],['records','Records',Users],['draws','Draws',Shuffle],['tournaments','Tournaments',Trophy],['projector','Projector',MonitorPlay],['reports','Reports',Trophy],['settings','Settings',SettingsIcon]
+          ['home','Overview',Home],['records','Records',Users],['draws','Draws',Shuffle],['tournaments','Tournaments',Trophy],['projector','Projector',MonitorPlay],['audit','Audit Logs',ClipboardList],['reports','Reports',Trophy],['settings','Settings',SettingsIcon]
         ].map(([id,label,Icon]) => <button key={id} className={activeTab === id ? 'nav active' : 'nav'} onClick={() => {setActiveTab(id);setMenuOpen(false);}}><Icon size={18}/><span>{label}</span></button>)}
         <button className="nav" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}<span>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span></button>
         <button className="logout" onClick={logout}><Lock size={17}/> Sign out</button>
@@ -495,7 +495,7 @@ function App() {
       <main className="main">
         <div className="mobile-topbar"><button className="menu-button" onClick={() => setMenuOpen(true)}><Menu size={20}/></button><div><b>LBA ADMIN</b><span>{currentUser?.full_name || "Committee portal"} · {currentUser?.role || "User"}</span></div><div className="secure"><ShieldCheck size={16}/> Secure</div></div>
         {activeTab === "home" && <Overview dashboard={dashboard} players={players} draws={draws} setActiveTab={setActiveTab} exportFile={exportFile}/>} 
-        {activeTab !== "home" && activeTab !== "tournaments" && <header className="hero">
+        {activeTab !== "home" && activeTab !== "tournaments" && activeTab !== "audit" && <header className="hero">
           <div className="hero-copy"><div className="hero-brand"><img src={logo} alt="Lesotho Badminton Association logo" className="hero-logo" /><div><p className="eyebrow">Administration purposes</p><h2>Ranking Records & Random Draw Management</h2></div></div><p>Update records, add latest obtained points, select tournament participants and generate draws only for players who are attending.</p></div>
           <div className="hero-actions lba-file-actions">
             <button className="button secondary lba-file-action" onClick={() => exportFile("/players/export.csv","lba_players.csv")}><Download size={16}/> Export CSV</button>
@@ -504,7 +504,7 @@ function App() {
           </div>
         </header>}
 
-        {activeTab !== 'home' && activeTab !== 'tournaments' && <section className="stats">
+        {activeTab !== 'home' && activeTab !== 'tournaments' && activeTab !== 'audit' && <section className="stats">
           <Stat label="Total Players" value={dashboard?.totalPlayers ?? 0} />
           <Stat label="Active Players" value={dashboard?.activePlayers ?? 0} />
           <Stat label="Categories" value={dashboard?.categories ?? 0} />
@@ -516,10 +516,11 @@ function App() {
         {activeTab === 'draws' && <Draws draws={draws} drawForm={drawForm} setDrawForm={setDrawForm} generateDraw={generateDraw} categoryOptions={categoryOptions} drawCandidates={drawCandidates} />}
         {activeTab === 'tournaments' && <TournamentScreen tournaments={tournaments} players={players} categoryOptions={categoryOptions} refresh={loadAll} setMessage={setMessage} appSettings={appSettings} />}
         {activeTab === 'projector' && <ProjectorScreen draws={draws} tournaments={tournaments} refresh={loadAll} />}
+        {activeTab === 'audit' && <AuditLogsPage tournaments={tournaments} />}
         {activeTab === 'reports' && <Reports />}
         {activeTab === 'settings' && <SettingsPanel settings={appSettings} setSettings={setAppSettings} setMessage={setMessage} />}
       </main>
-      <nav className="mobile-nav">{[["home","Home",Home],["records","Players",Users],["draws","Draws",Shuffle],["tournaments","Tournaments",Trophy],["projector","Projector",MonitorPlay],["reports","Reports",Trophy]].map(([id,label,Icon])=><button key={id} className={activeTab===id?"active":""} onClick={()=>setActiveTab(id)}><Icon size={19}/><span>{label}</span></button>)}</nav>
+      <nav className="mobile-nav">{[["home","Home",Home],["records","Players",Users],["draws","Draws",Shuffle],["tournaments","Tournaments",Trophy],["projector","Projector",MonitorPlay],["audit","Audit",ClipboardList],["reports","Reports",Trophy]].map(([id,label,Icon])=><button key={id} className={activeTab===id?"active":""} onClick={()=>setActiveTab(id)}><Icon size={19}/><span>{label}</span></button>)}</nav>
     </div>
     {booting && <BootSplash />}
     </>
@@ -2469,35 +2470,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             })}
           </section>
 
-          <section className="audit-history">
-            <div className="history-heading">
-              <div>
-                <span className="eyebrow">SYSTEM RECORD</span>
-                <h3>Full Tournament History</h3>
-                <p>Administrative actions and result records, with all timestamps shown in Lesotho time.</p>
-              </div>
-            </div>
-            <div className="audit-list">
-              {(detail.history || []).map(h => {
-                let display=h.details || '';
-                try {
-                  const parsed=JSON.parse(display);
-                  if (parsed && parsed.games) {
-                    const scores=parsed.games.map(g=>'Game '+g.game+': '+g.a+'-'+g.b).join(' · ');
-                    display=(parsed.winner ? 'Winner: '+parsed.winner+' · ' : '')+scores;
-                  } else if (parsed && parsed.previous && parsed.games) {
-                    display='Winner: '+(parsed.winner || '—')+' · '+parsed.games.map(g=>'Game '+g.game+': '+g.a+'-'+g.b).join(' · ');
-                  }
-                } catch (_) {}
-                return <div className="audit-row" key={h.id}>
-                  <b>{h.action.replaceAll('_',' ')}</b>
-                  <small>{formatLbaTime(h.created_at)} · Recorded by: {h.actor}</small>
-                  <span className="audit-detail">{display}</span>
-                </div>;
-              })}
-              {!detail.history?.length&&<div className="empty small">No tournament history yet.</div>}
-            </div>
-          </section>
+
         </div>}
   </section>;
 }
@@ -2584,6 +2557,108 @@ function SettingsPanel({ settings, setSettings, setMessage }) {
   </section>;
 }
 
+
+function readableAuditDetails(value) {
+  if (!value) return 'No additional details recorded.';
+  if (typeof value !== 'string') return String(value);
+  try {
+    const detail=JSON.parse(value);
+    if (!detail || typeof detail !== 'object') return String(detail);
+    if (Array.isArray(detail)) return detail.map(String).join(', ');
+    if (Array.isArray(detail.games)) {
+      const games=detail.games.map(g=>'Game '+(g.game??g.game_number??'')+': '+(g.a??g.side_a_score??'—')+'–'+(g.b??g.side_b_score??'—')).join(' · ');
+      return (detail.winner?'Winner: '+detail.winner+' · ':'')+games;
+    }
+    const parts=[];
+    if (detail.third_place!==undefined) parts.push('3rd place: '+(detail.third_place||'Not recorded'));
+    if (detail.reason) parts.push('Reason: '+detail.reason);
+    if (detail.event_podiums) {
+      Object.entries(detail.event_podiums).forEach(([event,p])=>{
+        parts.push(event+': 1st '+(p?.first||'—')+' · 2nd '+(p?.second||'—')+' · 3rd '+(p?.third||'—'));
+      });
+    }
+    const display=parts.join(' · ');
+    return display || Object.entries(detail).map(([key,val])=>key.replaceAll('_',' ')+': '+(typeof val==='object'?JSON.stringify(val):String(val))).join(' · ');
+  } catch {
+    return value;
+  }
+}
+
+function AuditLogsPage({tournaments}) {
+  const [view,setView]=useState('logs');
+  const [search,setSearch]=useState('');
+  const [tournamentFilter,setTournamentFilter]=useState('all');
+  const [data,setData]=useState({system_logs:[],system_records:[]});
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState('');
+
+  async function reload() {
+    setLoading(true);
+    setError('');
+    try {
+      const result=await api('/audit?limit=400');
+      setData({
+        system_logs:Array.isArray(result.system_logs)?result.system_logs:[],
+        system_records:Array.isArray(result.system_records)?result.system_records:[]
+      });
+    } catch(e) { setError(e.message||'Could not load audit records.'); }
+    finally { setLoading(false); }
+  }
+  useEffect(()=>{reload();},[]);
+
+  const shown=useMemo(()=>{
+    const query=search.toLocaleLowerCase().trim();
+    const rows=view==='logs'?data.system_logs:data.system_records;
+    return rows.filter(row=>{
+      if(view==='records' && tournamentFilter!=='all' && String(row.tournament_id)!==tournamentFilter)return false;
+      if(!query)return true;
+      return [row.action,row.actor,row.entity,row.entity_id,row.tournament_name,row.tournament_id,row.details]
+        .some(v=>String(v??'').toLocaleLowerCase().includes(query));
+    });
+  },[view,data,search,tournamentFilter]);
+
+  return <section className="audit-page">
+    <div className="audit-page-heading">
+      <div><span className="eyebrow">ADMINISTRATION · READ ONLY</span>
+        <h2>Audit Logs</h2>
+        <p>Review recorded system actions and complete tournament administration history. Times are shown in Lesotho time (SAST).</p>
+      </div>
+      <button className="button secondary audit-refresh" type="button" onClick={reload} disabled={loading}><RefreshCw size={16}/> Refresh Logs</button>
+    </div>
+    <div className="audit-view-tabs" role="tablist" aria-label="Audit categories">
+      <button type="button" role="tab" aria-selected={view==='logs'} className={view==='logs'?'active':''} onClick={()=>setView('logs')}>
+        <Activity size={17}/> System Logs <span>{data.system_logs.length}</span>
+      </button>
+      <button type="button" role="tab" aria-selected={view==='records'} className={view==='records'?'active':''} onClick={()=>setView('records')}>
+        <ClipboardList size={17}/> System Records <span>{data.system_records.length}</span>
+      </button>
+    </div>
+    <div className="audit-filterbar">
+      <label className="search"><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search action, user, tournament or details" aria-label="Search audit logs"/></label>
+      {view==='records' && <select aria-label="Filter by tournament" value={tournamentFilter} onChange={e=>setTournamentFilter(e.target.value)}>
+        <option value="all">All tournaments</option>
+        {tournaments.map(t=><option key={t.id} value={String(t.id)}>{t.name}</option>)}
+      </select>}
+      <span className="audit-record-count">{shown.length} records displayed</span>
+    </div>
+    {error && <p className="audit-alert" role="alert">{error}</p>}
+    {loading ? <div className="panel audit-empty">Loading recorded activity…</div> :
+      <div className="audit-record-list">
+        {shown.map(row=><article className="audit-entry" key={view+'-'+row.id}>
+          <div className="audit-entry-top">
+            <div><span className="audit-action">{String(row.action||'ACTIVITY').replaceAll('_',' ')}</span>
+              <small>{view==='records'?row.tournament_name:(row.entity||'System')+(row.entity_id?' · #'+row.entity_id:'')}</small>
+            </div>
+            <time>{formatLbaTime(row.created_at)}</time>
+          </div>
+          <div className="audit-entry-body">{readableAuditDetails(row.details)}</div>
+          <div className="audit-entry-foot"><UserRound size={13}/> Recorded by {row.actor||'SYSTEM'}{view==='records'&&row.match_id?' · Match #'+row.match_id:''}</div>
+        </article>)}
+        {!shown.length && <div className="panel audit-empty">{error?'Unable to display audit records.':'No matching audit records found.'}</div>}
+      </div>}
+    <p className="audit-retention-note">Showing up to 400 of the latest stored entries per category. Existing logs are not edited or deleted here.</p>
+  </section>;
+}
 
 function Reports() {
   return <section className="panel"><h3>Reports</h3><div className="report-grid"><div><h4>Official Ranking Register</h4><p>Use Export CSV for Excel-ready records.</p></div><div><h4>Tournament Draw Sheet</h4><p>Select attending players, generate a draw, then print the browser page.</p></div><div><h4>Player Activity Summary</h4><p>Use category and status filters to review participation.</p></div></div></section>;

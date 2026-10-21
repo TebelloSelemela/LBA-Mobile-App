@@ -301,6 +301,20 @@ def create_app():
             con.commit()
         return jsonify({"logged_out": True})
 
+
+    @app.route("/api/audit", methods=["GET"])
+    @require_auth
+    def audit_records():
+        # Read-only activity registry. Audit events come from the same tables
+        # already populated by player, draw, and tournament workflows.
+        try:
+            requested=int(request.args.get("limit","250"))
+        except (ValueError,TypeError):
+            requested=250
+        limit=max(1,min(500,requested))
+        with db() as con:
+            return jsonify(_audit_snapshot(con,limit))
+
     @app.route("/api/dashboard")
     @require_auth
     def dashboard():
@@ -2237,6 +2251,28 @@ def ensure_database():
         # Only medal fields/audit are updated; scores, rankings, and dates remain.
         _backfill_completed_tournament_podiums(con)
         con.commit()
+
+
+def _audit_snapshot(con, limit=250):
+    """Newest persisted system actions and tournament result/administration records."""
+    limit=max(1,min(500,int(limit)))
+    system_rows=con.execute("""
+        SELECT id,actor,action,entity,entity_id,details,created_at
+        FROM audit_logs
+        ORDER BY created_at DESC,id DESC LIMIT ?
+    """,(limit,)).fetchall()
+    record_rows=con.execute("""
+        SELECT ta.id,ta.tournament_id,ta.match_id,ta.actor,ta.action,
+               ta.details,ta.created_at,
+               COALESCE(t.name, 'Tournament #' || ta.tournament_id) AS tournament_name
+        FROM tournament_audit AS ta
+        LEFT JOIN tournaments AS t ON t.id=ta.tournament_id
+        ORDER BY ta.created_at DESC,ta.id DESC LIMIT ?
+    """,(limit,)).fetchall()
+    return {
+        "system_logs":[dict(row) for row in system_rows],
+        "system_records":[dict(row) for row in record_rows]
+    }
 
 
 def _player_name_keys(data):
