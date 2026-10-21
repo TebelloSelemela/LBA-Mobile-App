@@ -6087,3 +6087,76 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
     grid-template-columns:minmax(0,1fr)!important;
   }
 }
+
+
+/* Player records readability refinement v1.0.26
+   Scoped typography only: keep existing table layout and add/edit workflow. */
+.records-players-layout .players-registry-heading h3{
+  font-size:21px;
+  line-height:1.3;
+}
+.records-players-layout .players-registry-heading small{
+  font-size:12.5px;
+}
+.records-players-layout .players-registry-heading .eyebrow{
+  font-size:12px;
+}
+.records-players-layout .players-add-button{
+  font-size:13px;
+}
+.records-players-layout .players-record-toolbar input,
+.records-players-layout .players-record-toolbar select{
+  font-size:13px;
+}
+.records-players-layout .players-table{
+  font-size:13px;
+  line-height:1.45;
+}
+.records-players-layout .players-table th{
+  font-size:11.5px;
+  font-weight:780;
+  letter-spacing:.015em;
+}
+.records-players-layout .players-table td{
+  font-size:12.5px;
+}
+.records-players-layout .players-table td:nth-child(2) b{
+  font-size:13.5px;
+  font-weight:750;
+  line-height:1.35;
+}
+.records-players-layout .players-table td small{
+  font-size:11px;
+  line-height:1.4;
+  color:#b4ccdc;
+}
+:root[data-theme="light"] .records-players-layout .players-table td small{
+  color:#506b7e;
+}
+.records-players-layout .players-table td:nth-child(3) b,
+.records-players-layout .players-table td:nth-child(5) b{
+  font-size:13px;
+}
+.records-players-layout .players-table .points-add input{
+  font-size:12.5px;
+}
+.records-players-layout .players-table .points-add .mini,
+.records-players-layout .players-table .player-row-actions .mini{
+  font-size:12.5px;
+  font-weight:700;
+}
+.records-players-layout .players-table .badge{
+  font-size:11.5px;
+  font-weight:730;
+}
+@media (max-width:900px){
+  .records-players-layout .player-card-head b{
+    font-size:14px;
+  }
+  .records-players-layout .player-card-head small{
+    font-size:11.5px;
+  }
+  .records-players-layout .player-card .mobile-record-details b{
+    font-size:13px;
+  }
+}
