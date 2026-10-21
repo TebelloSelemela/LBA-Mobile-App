@@ -5945,3 +5945,145 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
     margin-top:15px;
   }
 }
+
+
+/* Records v1.0.25: full-width player register with on-demand add/edit dialog.
+   Existing record fields, player validation and points workflow are preserved. */
+.records-players-layout{display:block;width:100%;min-width:0}
+.records-players-layout>.players-registry{
+  box-sizing:border-box;width:100%;max-width:100%;min-width:0;
+  margin:0;overflow:hidden;
+}
+.players-registry-heading{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:16px;min-width:0;margin-bottom:17px;
+}
+.players-registry-heading h3{margin:5px 0 4px;font-size:20px}
+.players-registry-heading small{font-size:12px;color:var(--ui-muted)}
+.players-add-button{
+  display:inline-flex;align-items:center;justify-content:center;
+  flex:none;gap:8px;min-height:42px;white-space:nowrap;
+}
+.players-add-button svg{margin:0}
+.records-players-layout .players-record-toolbar{
+  display:flex;align-items:center;gap:10px;min-width:0;
+}
+.records-players-layout .players-record-toolbar .search{flex:1 1 310px;min-width:145px}
+.records-players-layout .players-record-toolbar select{
+  box-sizing:border-box;flex:0 1 150px;min-width:110px;
+  width:150px;max-width:170px;margin:0;
+}
+.records-players-layout .players-record-toolbar .icon-btn{
+  flex:none;margin:0;min-width:40px;min-height:42px;
+  display:grid;place-items:center;
+}
+.records-players-layout .players-table-wrap{
+  width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;
+}
+.records-players-layout .players-table{
+  table-layout:fixed;min-width:785px;width:100%;font-size:12px;
+}
+.records-players-layout .players-table th,
+.records-players-layout .players-table td{
+  padding:11px 8px;vertical-align:middle;overflow-wrap:anywhere;
+}
+.records-players-layout .players-table th:nth-child(1){width:6%}
+.records-players-layout .players-table th:nth-child(2){width:19%}
+.records-players-layout .players-table th:nth-child(3){width:10%}
+.records-players-layout .players-table th:nth-child(4){width:12%}
+.records-players-layout .players-table th:nth-child(5){width:8%}
+.records-players-layout .players-table th:nth-child(6){width:20%}
+.records-players-layout .players-table th:nth-child(7){width:11%}
+.records-players-layout .players-table th:nth-child(8){width:14%}
+.records-players-layout .players-table td:nth-child(2) b{
+  line-height:1.35;display:block;overflow-wrap:anywhere;
+}
+.records-players-layout .players-table td small{font-size:10px;line-height:1.4}
+.records-players-layout .players-table .points-add{
+  display:flex;align-items:center;gap:6px;min-width:0;
+}
+.records-players-layout .players-table .points-add input{
+  flex:1 1 58px;width:100%;min-width:48px;
+  padding:8px 7px;margin:0;
+}
+.records-players-layout .players-table .points-add button{
+  flex:none;margin:0;
+}
+.records-players-layout .player-row-actions{
+  display:flex;align-items:center;gap:5px;min-width:0;
+}
+.records-players-layout .player-row-actions .mini{
+  margin:0;padding:8px 9px;
+}
+.player-editor-overlay{
+  position:fixed;inset:0;z-index:250;
+  display:flex;align-items:center;justify-content:center;
+  padding:18px;background:rgba(1,9,17,.78);
+  backdrop-filter:blur(5px);overflow-y:auto;
+}
+.player-editor-dialog{
+  box-sizing:border-box;width:min(100%,650px);max-width:650px;
+  max-height:calc(100dvh - 36px);min-width:0;
+  overflow-y:auto;overflow-x:hidden;margin:0;padding:22px;
+  border-radius:20px;box-shadow:0 24px 90px rgba(0,0,0,.42);
+  scrollbar-width:thin;
+}
+.player-editor-head{
+  display:flex;justify-content:space-between;align-items:flex-start;
+  gap:14px;margin-bottom:18px;
+}
+.player-editor-head h3{font-size:21px;margin:5px 0}
+.player-editor-head small{font-size:12px;color:var(--ui-muted)}
+.player-editor-head .mini{flex:none;margin:0}
+.player-editor-dialog .form-row{
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;
+}
+.player-editor-dialog .form-row label{min-width:0}
+.player-editor-dialog .actions{display:flex;gap:10px;flex-wrap:wrap}
+.player-editor-dialog .actions .button{
+  display:inline-flex;align-items:center;gap:6px;
+}
+.player-editor-error{
+  color:#fca5a5;font-weight:700;font-size:12px;
+  line-height:1.45;padding:10px 12px;border:1px solid rgba(248,113,113,.4);
+  border-radius:11px;background:rgba(185,28,28,.13);
+}
+@media(max-width:900px){
+  .records-players-layout{width:100%}
+  .records-players-layout .players-registry{padding:14px}
+  .records-players-layout .players-record-toolbar{
+    display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;
+  }
+  .records-players-layout .players-record-toolbar .search{
+    grid-column:1/-1;width:100%;min-width:0;
+  }
+  .records-players-layout .players-record-toolbar select{
+    width:100%;max-width:none;margin:0;
+  }
+  .records-players-layout .players-record-toolbar .icon-btn{
+    grid-column:1/-1;width:100%;margin:0;
+  }
+  .player-editor-dialog{width:min(100%,600px)}
+  .records-page .player-editor-dialog .form-row{
+    display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  }
+  .records-page .player-editor-dialog .form label,
+  .records-page .player-editor-dialog .form input,
+  .records-page .player-editor-dialog .form select,
+  .records-page .player-editor-dialog .form textarea{
+    width:100%;min-width:0;max-width:100%;
+  }
+}
+@media(max-width:560px){
+  .players-registry-heading{
+    align-items:stretch;flex-direction:column;gap:12px;
+  }
+  .players-add-button{width:100%;justify-content:center}
+  .player-editor-overlay{align-items:flex-start;padding:10px}
+  .player-editor-dialog{
+    max-height:calc(100dvh - 20px);padding:16px;
+  }
+  .records-page .player-editor-dialog .form-row{
+    grid-template-columns:minmax(0,1fr)!important;
+  }
+}

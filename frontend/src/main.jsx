@@ -357,7 +357,7 @@ function App() {
     e.preventDefault();
     if (!form.date_of_birth) {
       setMessage('Enter the player’s date of birth. Age group and category are calculated automatically.');
-      return;
+      return 'Date of birth is required to save a player.';
     }
     try {
       const method = form.id ? 'PUT' : 'POST';
@@ -365,9 +365,11 @@ function App() {
       const saved=await api(path, { method, body: JSON.stringify(form) });
       setForm(emptyForm());
       setMessage(`${saved.full_name} saved as ${saved.category_code} · ${saved.age_group} · age ${saved.age}.`);
-      loadAll();
+      await loadAll();
+      return true;
     } catch (err) {
       setMessage(err.message);
+      return err.message || 'Could not save player.';
     }
   }
 
@@ -980,6 +982,49 @@ function AuthScreen({
 
 function Records({ players, form, setForm, savePlayer, deletePlayer, filters, setFilters, categoryOptions, loadAll, pointInputs, setPointInputs, addPoints, setMessage }) {
   const [recordView, setRecordView] = useState('players');
+  const [showPlayerEditor, setShowPlayerEditor] = useState(false);
+  const [savingPlayer, setSavingPlayer] = useState(false);
+  const [playerEditorError, setPlayerEditorError] = useState('');
+  function openAddPlayer() {
+    setForm(emptyForm());
+    setPlayerEditorError('');
+    setShowPlayerEditor(true);
+  }
+  function openEditPlayer(player) {
+    setForm({...emptyForm(),...player});
+    setPlayerEditorError('');
+    setShowPlayerEditor(true);
+  }
+  function closePlayerEditor() {
+    if (savingPlayer) return;
+    setShowPlayerEditor(false);
+    setPlayerEditorError('');
+    setForm(emptyForm());
+  }
+  async function submitPlayer(e) {
+    e.preventDefault();
+    if (savingPlayer) return;
+    setSavingPlayer(true);
+    setPlayerEditorError('');
+    try {
+      const result = await savePlayer(e);
+      if (result === true) setShowPlayerEditor(false);
+      else setPlayerEditorError(typeof result === 'string' ? result : 'Unable to save the player. Please try again.');
+    } catch (e) {
+      setPlayerEditorError(e.message || 'Unable to save the player.');
+    } finally {
+      setSavingPlayer(false);
+    }
+  }
+  useEffect(() => {
+    if (!showPlayerEditor) return;
+    const onKeyDown = event => {
+      if (event.key === 'Escape' && !savingPlayer) closePlayerEditor();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showPlayerEditor, savingPlayer]);
+
   const [doublesEvent, setDoublesEvent] = useState('All');
   const [doublesTeams, setDoublesTeams] = useState([]);
   const [loadingDoubles, setLoadingDoubles] = useState(false);
@@ -1190,10 +1235,52 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
       <button type="button" className={recordView==='doubles'?'active':''} onClick={()=>setRecordView('doubles')}><Trophy size={16}/> Doubles Teams</button>
     </div>
 
-    {recordView==='players' ? <section className="grid two">
-      <div className="panel">
-        <h3>{form.id ? 'Update Player' : 'Add Player'}</h3>
-        <form onSubmit={savePlayer} className="form">
+    {recordView==='players' ? <section className="records-players-layout">
+      <div className="panel wide players-registry">
+        <div className="players-registry-heading">
+          <div><span className="eyebrow">PLAYER RECORDS</span><h3>Registered Players</h3><small>{players.length} player(s) shown</small></div>
+          <button type="button" className="button players-add-button" onClick={openAddPlayer}><UserPlus size={16}/> Add Player</button>
+        </div>
+        <div className="toolbar players-record-toolbar">
+          <div className="search"><Search size={16}/><input placeholder="Search player, club or category" value={filters.q} onChange={e => setFilters({ ...filters, q: e.target.value })} onKeyDown={e => e.key === 'Enter' && loadAll()} /></div>
+          <select value={filters.category} onChange={e => setFilters({ ...filters, category: e.target.value })}>{categoryOptions.map(c => <option key={c}>{c}</option>)}</select>
+          <select value={filters.status} onChange={e => setFilters({ ...filters, status: e.target.value })}><option>All</option><option>Active</option><option>Inactive</option></select>
+          <button className="icon-btn" onClick={loadAll}><RefreshCw size={16}/></button>
+        </div>
+        <div className="table-wrap desktop-table players-table-wrap"><table className="players-table"><thead><tr><th>Rank</th><th>Name</th><th>Category</th><th>Club</th><th>Points</th><th>Add latest points</th><th>Status</th><th></th></tr></thead><tbody>{players.map(p => <tr key={p.id}><td>#{p.rank_position || '-'}</td><td><b>{p.full_name}</b><small>{p.gender} · {p.age_group}{p.age!==null && p.age!==undefined ? ' · '+p.age+' yrs' : ' · DOB needed'}</small></td><td>{p.category_code}</td><td>{p.club || '-'}</td><td><b>{p.total_points}</b></td><td><div className="points-add"><input type="number" placeholder="+ points" value={pointInputs[p.id] || ''} onChange={e => setPointInputs(current => ({ ...current, [p.id]: e.target.value }))}/><button className="mini green" onClick={() => addPoints(p)}>Add</button></div></td><td><span className={p.status === 'Active' ? 'badge green' : 'badge'}>{p.status}</span></td><td><div className="player-row-actions"><button type="button" className="mini" onClick={() => openEditPlayer(p)}>Edit</button><button type="button" className="mini danger" title="Delete player" aria-label={'Delete '+p.full_name} onClick={() => deletePlayer(p.id)}><Trash2 size={14}/></button></div></td></tr>)}</tbody></table></div>
+        <div className="mobile-player-list">
+          {players.map(p=><article className="player-card" key={'mobile-player-'+p.id}>
+            <div className="player-card-head">
+              <strong className="mobile-rank">#{p.rank_position || '-'}</strong>
+              <div><b>{p.full_name}</b><small>{p.gender || 'Gender not set'} · {p.age_group || 'Age group not set'}{p.age!==null && p.age!==undefined ? ' · '+p.age+' yrs' : ' · DOB needed'}</small></div>
+              <span className={p.status === 'Active' ? 'badge green' : 'badge'}>{p.status}</span>
+            </div>
+            <div className="mobile-record-details">
+              <div><small>Category</small><b>{p.category_code || '—'}</b></div>
+              <div><small>Club</small><b>{p.club || 'Independent'}</b></div>
+              <div><small>Points</small><b>{Number(p.total_points || 0).toLocaleString()}</b></div>
+              <div><small>Tournaments</small><b>{Number(p.tournaments_played || 0)}</b></div>
+            </div>
+            <div className="mobile-points-row">
+              <input type="number" placeholder="+ latest points" value={pointInputs[p.id] || ''} onChange={e => setPointInputs(current => ({ ...current, [p.id]: e.target.value }))}/>
+              <button type="button" className="mini green" onClick={() => addPoints(p)}>Add points</button>
+            </div>
+            <div className="mobile-record-actions">
+              <button type="button" className="mini" onClick={() => openEditPlayer(p)}>Edit Player</button>
+              <button type="button" className="mini danger" onClick={() => deletePlayer(p.id)}><Trash2 size={14}/> Delete</button>
+            </div>
+          </article>)}
+          {!players.length&&<div className="empty small">No players match the current filters.</div>}
+        </div>
+      </div>
+      {showPlayerEditor && <div className="player-editor-overlay">
+        <section className="panel player-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="player-editor-title">
+          <div className="player-editor-head">
+            <div><span className="eyebrow">PLAYER MANAGEMENT</span><h3 id="player-editor-title">{form.id ? 'Edit Player Information' : 'Add Player'}</h3><small>{form.id ? 'Update the selected player record.' : 'Register a new player in the LBA records.'}</small></div>
+            <button type="button" className="mini" onClick={closePlayerEditor} disabled={savingPlayer}>Close</button>
+          </div>
+          <form onSubmit={submitPlayer} className="form">
+
           <Input label="Full name" value={form.full_name} onChange={v => setForm({ ...form, full_name: v })}/>
           <div className="form-row"><Input label="First name" value={form.first_name} onChange={v => setForm({ ...form, first_name: v })}/><Input label="Last name" value={form.last_name} onChange={v => setForm({ ...form, last_name: v })}/></div>
           <div className="form-row">
@@ -1213,42 +1300,11 @@ function Records({ players, form, setForm, savePlayer, deletePlayer, filters, se
           <p className="helper">Use the table's “Add points” box to add latest tournament points. Example: 120 + 20 = 140.</p>
           <label><span>Status</span><select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}><option>Active</option><option>Inactive</option></select></label>
           <label><span>Notes</span><textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}/></label>
-          <div className="actions"><button className="button"><Plus size={16}/> Save</button><button type="button" className="button secondary" onClick={() => setForm(emptyForm())}>Clear</button></div>
+          {playerEditorError && <p className="player-editor-error" role="alert">{playerEditorError}</p>}
+          <div className="actions"><button className="button" disabled={savingPlayer}><Plus size={16}/> {savingPlayer?'Saving…':(form.id?'Save Changes':'Save Player')}</button><button type="button" className="button secondary" disabled={savingPlayer} onClick={closePlayerEditor}>Cancel</button></div>
         </form>
-      </div>
-      <div className="panel wide">
-        <div className="toolbar">
-          <div className="search"><Search size={16}/><input placeholder="Search player, club or category" value={filters.q} onChange={e => setFilters({ ...filters, q: e.target.value })} onKeyDown={e => e.key === 'Enter' && loadAll()} /></div>
-          <select value={filters.category} onChange={e => setFilters({ ...filters, category: e.target.value })}>{categoryOptions.map(c => <option key={c}>{c}</option>)}</select>
-          <select value={filters.status} onChange={e => setFilters({ ...filters, status: e.target.value })}><option>All</option><option>Active</option><option>Inactive</option></select>
-          <button className="icon-btn" onClick={loadAll}><RefreshCw size={16}/></button>
-        </div>
-        <div className="table-wrap desktop-table"><table><thead><tr><th>Rank</th><th>Name</th><th>Category</th><th>Club</th><th>Points</th><th>Add latest points</th><th>Status</th><th></th></tr></thead><tbody>{players.map(p => <tr key={p.id}><td>#{p.rank_position || '-'}</td><td><b>{p.full_name}</b><small>{p.gender} · {p.age_group}{p.age!==null && p.age!==undefined ? ' · '+p.age+' yrs' : ' · DOB needed'}</small></td><td>{p.category_code}</td><td>{p.club || '-'}</td><td><b>{p.total_points}</b></td><td><div className="points-add"><input type="number" placeholder="+ points" value={pointInputs[p.id] || ''} onChange={e => setPointInputs(current => ({ ...current, [p.id]: e.target.value }))}/><button className="mini green" onClick={() => addPoints(p)}>Add</button></div></td><td><span className={p.status === 'Active' ? 'badge green' : 'badge'}>{p.status}</span></td><td><button className="mini" onClick={() => setForm({...emptyForm(),...p})}>Edit</button><button className="mini danger" onClick={() => deletePlayer(p.id)}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div>
-        <div className="mobile-player-list">
-          {players.map(p=><article className="player-card" key={'mobile-player-'+p.id}>
-            <div className="player-card-head">
-              <strong className="mobile-rank">#{p.rank_position || '-'}</strong>
-              <div><b>{p.full_name}</b><small>{p.gender || 'Gender not set'} · {p.age_group || 'Age group not set'}{p.age!==null && p.age!==undefined ? ' · '+p.age+' yrs' : ' · DOB needed'}</small></div>
-              <span className={p.status === 'Active' ? 'badge green' : 'badge'}>{p.status}</span>
-            </div>
-            <div className="mobile-record-details">
-              <div><small>Category</small><b>{p.category_code || '—'}</b></div>
-              <div><small>Club</small><b>{p.club || 'Independent'}</b></div>
-              <div><small>Points</small><b>{Number(p.total_points || 0).toLocaleString()}</b></div>
-              <div><small>Tournaments</small><b>{Number(p.tournaments_played || 0)}</b></div>
-            </div>
-            <div className="mobile-points-row">
-              <input type="number" placeholder="+ latest points" value={pointInputs[p.id] || ''} onChange={e => setPointInputs(current => ({ ...current, [p.id]: e.target.value }))}/>
-              <button type="button" className="mini green" onClick={() => addPoints(p)}>Add points</button>
-            </div>
-            <div className="mobile-record-actions">
-              <button type="button" className="mini" onClick={() => {setForm({...emptyForm(),...p});window.scrollTo({top:0,behavior:'smooth'});}}>Edit Player</button>
-              <button type="button" className="mini danger" onClick={() => deletePlayer(p.id)}><Trash2 size={14}/> Delete</button>
-            </div>
-          </article>)}
-          {!players.length&&<div className="empty small">No players match the current filters.</div>}
-        </div>
-      </div>
+        </section>
+      </div>}
     </section> : <section className="panel doubles-records-page">
       <div className="section-head records-section-head">
         <div><span className="eyebrow">PARTNERSHIP RANKINGS</span><h3>Doubles Team Records</h3><p>MD, WD and XD are ranked independently by doubles points. These points are separate from each player’s singles ranking points.</p></div>
