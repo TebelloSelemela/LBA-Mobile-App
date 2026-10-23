@@ -1963,6 +1963,55 @@ def now_iso():
     return datetime.now(ZoneInfo("Africa/Maseru")).replace(microsecond=0).isoformat()
 
 
+def _seed_initial_administrator(con, username, email, password, timestamp, hasher):
+    """Only bootstrap when the user table is entirely empty.
+
+    Do not overwrite an existing account or collide with an occupied email.
+    This protects local databases across restarts, username changes and restores.
+    """
+    existing_username = con.execute(
+        "SELECT username FROM users WHERE username=? COLLATE NOCASE LIMIT 1",
+        (username,)
+    ).fetchone()
+    if existing_username:
+        return "existing_username"
+
+    owner = con.execute(
+        "SELECT username FROM users WHERE LOWER(email)=LOWER(?) LIMIT 1",
+        (email,)
+    ).fetchone()
+    if owner:
+        print(
+            f"[LESBAD AUTH] Admin bootstrap skipped: configured email belongs to "
+            f"existing user '{owner['username']}'. Existing credentials preserved; "
+            "sign in with the existing account.",
+            flush=True
+        )
+        return "existing_email"
+
+    if con.execute("SELECT COUNT(*) FROM users").fetchone()[0] > 0:
+        print(
+            "[LESBAD AUTH] Existing users detected; administrator bootstrap skipped. "
+            "No new Super Admin was created. Use an existing account to sign in.",
+            flush=True
+        )
+        return "existing_users"
+
+    if not password:
+        raise RuntimeError("Initial local administrator needs a seed password.")
+
+    con.execute("""
+        INSERT INTO users(username,email,full_name,password_hash,role,
+                          is_active,email_verified,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?)
+    """, (
+        username, email, "LBA Administrator", hasher(password),
+        "Super Admin", 1, 1, timestamp, timestamp
+    ))
+    print(f"[LESBAD AUTH] New initial administrator '{username}' created.", flush=True)
+    return "created"
+
+
 def ensure_database():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with db() as con:
@@ -2220,23 +2269,11 @@ def ensure_database():
                 pass
         con.execute("UPDATE draws SET round_number=COALESCE(round_number,1)")
         con.execute("UPDATE draws SET stage=COALESCE(stage,round_name,'Round 1')")
-        admin = con.execute("SELECT id FROM users WHERE username=?", (ADMIN_USERNAME,)).fetchone()
-        if not admin and ADMIN_PASSWORD:
-            now = now_iso()
-            con.execute("""
-                INSERT INTO users(username,email,full_name,password_hash,role,is_active,email_verified,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?)
-            """, (
-                ADMIN_USERNAME,
-                os.environ.get("LBA_ADMIN_EMAIL", "admin@lba.local"),
-                "LBA Administrator",
-                generate_password_hash(ADMIN_PASSWORD),
-                "Super Admin",
-                1,
-                1,
-                now,
-                now,
-            ))
+        _seed_initial_administrator(
+            con, ADMIN_USERNAME,
+            os.environ.get("LBA_ADMIN_EMAIL", "admin@lba.local"),
+            ADMIN_PASSWORD, now_iso(), generate_password_hash
+        )
 
         count = con.execute("SELECT COUNT(*) FROM players").fetchone()[0]
         has_combined = con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='combined_rankings'").fetchone()

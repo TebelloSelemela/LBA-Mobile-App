@@ -53,12 +53,12 @@ jobs:
           cd frontend
           $env:VITE_API_BASE = ""
           npm run desktop:build
-          Copy-Item "dist-electron/LBA-Tournament-Desktop-1.0.27-x64.exe" "../LESBAD-LAN-Desktop-v1.0.27.exe"
-          if (-not (Test-Path "../LESBAD-LAN-Desktop-v1.0.27.exe")) { throw "Client missing" }
+          Copy-Item "dist-electron/LBA-Tournament-Desktop-1.0.28-x64.exe" "../LESBAD-LAN-Desktop-v1.0.28.exe"
+          if (-not (Test-Path "../LESBAD-LAN-Desktop-v1.0.28.exe")) { throw "Client missing" }
       - name: Package local server for Desktop 1
         shell: pwsh
         run: |
-          $pack="LESBAD-LAN-Server-v1.0.27"
+          $pack="LESBAD-LAN-Server-v1.0.28"
           New-Item -ItemType Directory -Force "$pack/backend","$pack/frontend/src/assets" | Out-Null
           Copy-Item "backend/app.py","backend/requirements.txt" -Destination "$pack/backend"
           Copy-Item "frontend/dist" -Destination "$pack/frontend/dist" -Recurse
@@ -71,17 +71,17 @@ jobs:
         with:
           name: lesbad-local-network-windows
           path: |
-            LESBAD-LAN-Desktop-v1.0.27.exe
-            LESBAD-LAN-Server-v1.0.27.zip
+            LESBAD-LAN-Desktop-v1.0.28.exe
+            LESBAD-LAN-Server-v1.0.28.zip
           if-no-files-found: error
       - name: Publish separate LAN edition Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="lan-v1.0.27"
+          TAG="lan-v1.0.28"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" LESBAD-LAN-Desktop-v1.0.27.exe LESBAD-LAN-Server-v1.0.27.zip --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload "$TAG" LESBAD-LAN-Desktop-v1.0.28.exe LESBAD-LAN-Server-v1.0.28.zip --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$TAG" LESBAD-LAN-Desktop-v1.0.27.exe LESBAD-LAN-Server-v1.0.27.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "LESBAD Local Network Edition — v1.0.27" --notes "Separate LAN-only pilot. Desktop 1 hosts the Flask API and SQLite database. Desktop 2 uses the client EXE, tablet connects by browser. Read local-network/README.md before migrating data."
+            gh release create "$TAG" LESBAD-LAN-Desktop-v1.0.28.exe LESBAD-LAN-Server-v1.0.28.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "LESBAD Local Network Edition — v1.0.28" --notes "Separate LAN-only pilot. Desktop 1 hosts the Flask API and SQLite database. Desktop 2 uses the client EXE, tablet connects by browser. Read local-network/README.md before migrating data."
           fi
