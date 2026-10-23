@@ -1,5 +1,6 @@
 """Test LAN backup, migration protection and safe setup without launching Flask."""
 import importlib.util
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -25,14 +26,14 @@ class LanDatabaseTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name)
         self.existing=self.root/"original.sqlite3"
-        with sqlite3.connect(self.existing) as db:
+        with closing(sqlite3.connect(self.existing)) as db:
             db.execute("CREATE TABLE players(id INTEGER PRIMARY KEY,name TEXT)")
             db.execute("INSERT INTO players(name) VALUES('Existing athlete')")
             db.commit()
 
     def test_backup_is_consistent(self):
         file=backup.backup_database(self.existing,self.root/"backups")
-        with sqlite3.connect(file) as db:
+        with closing(sqlite3.connect(file)) as db:
             self.assertEqual(db.execute("SELECT name FROM players").fetchone()[0],
                              "Existing athlete")
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0],"ok")
@@ -50,13 +51,14 @@ class LanDatabaseTests(unittest.TestCase):
 
     def test_import_validates_and_does_not_overwrite(self):
         db=self.root/"lesbad.sqlite3"
-        with sqlite3.connect(self.existing) as con:
+        with closing(sqlite3.connect(self.existing)) as con:
             for name in ("draws","draw_matches","tournaments","users"):
                 con.execute(f"CREATE TABLE {name}(id INTEGER PRIMARY KEY)")
+            con.commit()
         migration.import_existing(self.existing,db)
         with self.assertRaises(FileExistsError):
             migration.import_existing(self.existing,db)
-        with sqlite3.connect(db) as con:
+        with closing(sqlite3.connect(db)) as con:
             self.assertEqual(con.execute("SELECT name FROM players").fetchone()[0],
                              "Existing athlete")
 
