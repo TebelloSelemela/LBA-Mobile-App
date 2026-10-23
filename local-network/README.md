@@ -50,7 +50,7 @@ in the tablet browser, and bookmark it. The tablet does not run Windows EXE.
 
 - **Only Desktop 1** writes `local-data\lesbad.sqlite3`. Desktop 2 and tablet
   talk to the Flask API. Do not open the SQLite file over a network share.
-- WAL mode and 15-second SQLite busy timeout assist concurrent LAN requests.
+- WAL mode and 20-second SQLite busy timeout assist concurrent LAN requests.
 - Server performs consistent online SQLite backups at startup and every
   **six hours**; retains **30 latest verified snapshots** in
   `local-data\backups`.

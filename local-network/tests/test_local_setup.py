@@ -68,6 +68,8 @@ class LanDatabaseTests(unittest.TestCase):
         server=(ROOT/"local-network"/"server.py").read_text(encoding="utf-8")
         self.assertIn('app.get("/<path:asset_path>")',server)
         self.assertIn('serve(app, host="0.0.0.0"',server)
+        backend=(ROOT/"backend"/"app.py").read_text(encoding="utf-8")
+        self.assertIn("sqlite3.connect(DB_PATH, timeout=20)",backend)
 
 
 if __name__=="__main__":

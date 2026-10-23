@@ -1953,7 +1953,8 @@ def require_auth(func):
 
 
 def db():
-    con = sqlite3.connect(DB_PATH)
+    con = sqlite3.connect(DB_PATH, timeout=20)
+    con.execute("PRAGMA busy_timeout=20000")
     con.row_factory = sqlite3.Row
     return con
 
