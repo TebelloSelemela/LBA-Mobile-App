@@ -6,7 +6,10 @@ import { Download, FileText, Lock, Plus, RefreshCw, Search, Shuffle, Trash2, Tro
 import './style.css';
 import logo from './assets/lba-logo.png';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:5050/api';
+// LAN edition: browser/tablet uses its host IP automatically; no hard-coded Railway URL.
+const API_BASE = import.meta.env.VITE_API_BASE ||
+  ((window.location.protocol === 'http:' || window.location.protocol === 'https:')
+    ? window.location.origin + '/api' : 'http://127.0.0.1:5050/api');
 
 function getToken() {
   return sessionStorage.getItem('lba_token') || '';

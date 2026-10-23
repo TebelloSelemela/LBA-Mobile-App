@@ -1,0 +1,87 @@
+name: Build LESBAD Local Network Edition
+
+on:
+  push:
+    branches: [local-network]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  local-network-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify backend and LAN module tests
+        shell: pwsh
+        run: |
+          python -m py_compile backend/app.py local-network/server.py local-network/configure.py local-network/import_existing_db.py local-network/local_network_backup.py
+          python -m unittest discover -s backend/tests -p "test_*.py" -v
+          python -m unittest discover -s local-network/tests -p "test_*.py" -v
+      - name: Install and build LAN web application
+        shell: pwsh
+        run: |
+          cd frontend
+          npm install --no-audit --no-fund
+          $env:VITE_API_BASE = ""
+          npm run build
+      - name: Create Windows icon
+        shell: pwsh
+        run: |
+          python -m pip install Pillow --disable-pip-version-check
+          @'
+          from PIL import Image
+          from pathlib import Path
+          image=Image.open("frontend/src/assets/lesbad-icon-clean.jpg").convert("RGBA")
+          image=image.resize((512,512),Image.Resampling.LANCZOS)
+          path=Path("frontend/electron")
+          path.mkdir(exist_ok=True)
+          image.save(path/"lesbad-icon.png","PNG",optimize=True)
+          image.save(path/"lesbad-icon.ico","ICO",sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])
+          '@ | Set-Content prepare_lan_icon.py
+          python prepare_lan_icon.py
+      - name: Build LAN Windows client
+        shell: pwsh
+        run: |
+          cd frontend
+          $env:VITE_API_BASE = ""
+          npm run desktop:build
+          Copy-Item "dist-electron/LBA-Tournament-Desktop-1.0.27-x64.exe" "../LESBAD-LAN-Desktop-v1.0.27.exe"
+          if (-not (Test-Path "../LESBAD-LAN-Desktop-v1.0.27.exe")) { throw "Client missing" }
+      - name: Package local server for Desktop 1
+        shell: pwsh
+        run: |
+          $pack="LESBAD-LAN-Server-v1.0.27"
+          New-Item -ItemType Directory -Force "$pack/backend","$pack/frontend/src/assets" | Out-Null
+          Copy-Item "backend/app.py","backend/requirements.txt" -Destination "$pack/backend"
+          Copy-Item "frontend/dist" -Destination "$pack/frontend/dist" -Recurse
+          Copy-Item "frontend/src/assets/lba-logo.png" -Destination "$pack/frontend/src/assets"
+          Copy-Item "local-network" -Destination "$pack/local-network" -Recurse
+          Copy-Item ".gitignore" -Destination "$pack"
+          Compress-Archive -Path $pack -DestinationPath "$pack.zip" -CompressionLevel Optimal
+          if (-not (Test-Path "$pack.zip")) { throw "Server ZIP missing" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lesbad-local-network-windows
+          path: |
+            LESBAD-LAN-Desktop-v1.0.27.exe
+            LESBAD-LAN-Server-v1.0.27.zip
+          if-no-files-found: error
+      - name: Publish separate LAN edition Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="lan-v1.0.27"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" LESBAD-LAN-Desktop-v1.0.27.exe LESBAD-LAN-Server-v1.0.27.zip --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" LESBAD-LAN-Desktop-v1.0.27.exe LESBAD-LAN-Server-v1.0.27.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "LESBAD Local Network Edition — v1.0.27" --notes "Separate LAN-only pilot. Desktop 1 hosts the Flask API and SQLite database. Desktop 2 uses the client EXE, tablet connects by browser. Read local-network/README.md before migrating data."
+          fi

@@ -1,6 +1,8 @@
-backend/venv/
-frontend/node_modules/
-frontend/dist/
-*.pyc
+# LESBAD local-only sensitive files / generated artifacts
+local-data/
+.venv/
 __pycache__/
-.env
+*.py[cod]
+frontend/dist/
+frontend/dist-electron/
+frontend/node_modules/
