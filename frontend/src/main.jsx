@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
@@ -1546,6 +1546,9 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
   const [tournamentPlayers, setTournamentPlayers] = useState(players);
   const [loadingDoublesTeams, setLoadingDoublesTeams] = useState(false);
   const [bracketZoom, setBracketZoom] = useState(0.5);
+  // Manual zoom must not be overwritten by ResizeObserver's automatic Fit.
+  const bracketZoomMode = useRef('fit');
+  const [bracketExpanded, setBracketExpanded] = useState(false);
   const [showCreate, setShowCreate] = useState(tournaments.length === 0);
   const [splitPct, setSplitPct] = useState(() => {
     const saved=Number(localStorage.getItem('lba_tournament_split') || 32);
@@ -1754,6 +1757,7 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
 
   function fitBracket() {
     if (!bracketGeometry) return;
+    bracketZoomMode.current='fit';
     window.requestAnimationFrame(() => {
       const scroller=document.querySelector('.tournament-bracket-workspace .bracket-scroll');
       if (!scroller) return;
@@ -1763,17 +1767,37 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     });
   }
 
-  // Refit after selecting an event, opening a tournament, or resizing the
-  // bracket viewport. Manual zoom +/- and 100% still work independently.
+  function setManualBracketZoom(percent) {
+    bracketZoomMode.current='manual';
+    const next=Math.max(25,Math.min(150,Math.round(Number(percent))));
+    setBracketZoom(next/100);
+  }
+
+  // Step to exact multiples of 10%, even after Fit yields e.g. 58%.
+  // 100% deliberately retains natural dimensions: scroll to inspect the draw.
+  function changeBracketZoom(delta) {
+    bracketZoomMode.current='manual';
+    setBracketZoom(current => {
+      const pct=Math.round(current*100);
+      const next=delta>0 ? Math.floor(pct/10)*10+10 : Math.ceil(pct/10)*10-10;
+      return Math.max(25,Math.min(150,next))/100;
+    });
+  }
+
+  // Refit for a different event/draw. Once an administrator adjusts the zoom,
+  // a ResizeObserver or scrollbar must not snap it back to 58%/68%.
   useEffect(() => {
     if (!bracketGeometry || !selectedId || !eventHasDraw) return;
     const scroller=document.querySelector('.tournament-bracket-workspace .bracket-scroll');
     if (!scroller) return;
+    bracketZoomMode.current='fit';
     let frame=0;
     const update=() => {
+      if (bracketZoomMode.current!=='fit') return;
       if (frame) window.cancelAnimationFrame(frame);
       frame=window.requestAnimationFrame(() => {
         frame=0;
+        if (bracketZoomMode.current!=='fit') return;
         setBracketZoom(fittedBracketZoom(scroller));
         scroller.scrollLeft=0;
         scroller.scrollTop=0;
@@ -1790,9 +1814,13 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
     };
   }, [bracketGeometry, selectedId, selectedEvent, eventHasDraw]);
 
-  function changeBracketZoom(delta) {
-    setBracketZoom(z => Math.max(0.38,Math.min(1.5,Math.round((z+delta)*100)/100)));
-  }
+  // Allow the expanded bracket to be dismissed with Escape.
+  useEffect(() => {
+    if (!bracketExpanded) return;
+    const onKey=event=>{if(event.key==='Escape') setBracketExpanded(false);};
+    window.addEventListener('keydown',onKey);
+    return ()=>window.removeEventListener('keydown',onKey);
+  }, [bracketExpanded]);
 
   function updateDoublesPair(index, field, value) {
     setDoublesPairs(current => current.map((pair,i)=>i===index ? {...pair,[field]:value} : pair));
@@ -2372,15 +2400,17 @@ function TournamentScreen({ tournaments, players, categoryOptions, refresh, setM
             </div>
           </div>
 
-          <div className="live-bracket">
+          <div className={'live-bracket'+(bracketExpanded?' bracket-maximized':'')}>
             <div className="live-bracket-head">
-              <div><span className="eyebrow">LIVE DRAW PATH</span><h3>{selectedEvent} Knockout Bracket</h3><small>Filled through {latestRound?.stage || 'the current draw'}; future matches remain on standby.</small></div>
+              <div><span className="eyebrow">LIVE DRAW PATH</span><h3>{selectedEvent} Knockout Bracket</h3><small>Fit displays the full draw. At 100%, scroll horizontally and vertically to see every match at its native readable size.</small></div>
               <div className="bracket-view-tools">
-                <button type="button" className="mini" onClick={()=>changeBracketZoom(-0.1)} disabled={bracketZoom<=0.38}>−</button>
-                <b>{Math.round(bracketZoom*100)}%</b>
-                <button type="button" className="mini" onClick={()=>changeBracketZoom(0.1)} disabled={bracketZoom>=1.5}>+</button>
-                <button type="button" className="mini" onClick={fitBracket}>Fit</button>
-                <button type="button" className="mini" onClick={()=>setBracketZoom(1)}>100%</button>
+                <button type="button" className="mini" aria-label="Zoom out bracket" title="Zoom out" onClick={()=>changeBracketZoom(-1)} disabled={bracketZoom<=0.25}>−</button>
+                <b aria-live="polite">{Math.round(bracketZoom*100)}%</b>
+                <button type="button" className="mini" aria-label="Zoom in bracket" title="Zoom in" onClick={()=>changeBracketZoom(1)} disabled={bracketZoom>=1.5}>+</button>
+                <input type="range" className="bracket-zoom-slider" min="25" max="150" step="1" value={Math.round(bracketZoom*100)} aria-label="Bracket zoom percentage" onChange={e=>setManualBracketZoom(e.target.value)} />
+                <button type="button" className="mini" onClick={fitBracket} title="Fit entire draw to viewport">Fit</button>
+                <button type="button" className="mini" onClick={()=>setManualBracketZoom(100)} title="Actual size; scroll to inspect">100%</button>
+                <button type="button" className="mini bracket-expand" onClick={()=>setBracketExpanded(v=>!v)} title={bracketExpanded?'Return to tournament':'Expand bracket to screen'}>{bracketExpanded?<><Minimize size={14}/> Exit</>:<><Maximize size={14}/> Expand</>}</button>
               </div>
             </div>
             {bracketModel && bracketGeometry && <div className="bracket-scroll">

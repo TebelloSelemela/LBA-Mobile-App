@@ -6407,3 +6407,70 @@ input,select,textarea{background:var(--ui-input);color:var(--ui-text);border-col
   :root[data-theme="light"] .tournament-list-panel.list-mode{min-height:0;max-height:none}
   :root[data-theme="light"] .tournament-history-summary{max-height:360px}
 }
+
+
+/* v1.0.29 — stable bracket zoom, accessible slider and expanded inspection. */
+.tournament-bracket-workspace .bracket-view-tools{
+  gap:7px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+.tournament-bracket-workspace .bracket-view-tools .bracket-zoom-slider{
+  width:112px;
+  height:24px;
+  min-width:90px;
+  margin:0 7px;
+  cursor:pointer;
+  accent-color:#2bc7a0;
+  background:transparent;
+}
+.tournament-bracket-workspace .bracket-view-tools .bracket-expand{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  white-space:nowrap;
+}
+.tournament-bracket-workspace .bracket-scroll{
+  overscroll-behavior:contain;
+}
+.tournament-bracket-workspace .live-bracket.bracket-maximized{
+  position:fixed!important;
+  z-index:9999!important;
+  inset:12px!important;
+  width:auto!important;
+  max-width:none!important;
+  height:calc(100vh - 24px)!important;
+  max-height:none!important;
+  display:flex!important;
+  flex-direction:column!important;
+  overflow:hidden!important;
+  margin:0!important;
+  padding:16px!important;
+  box-shadow:0 24px 90px rgba(0,0,0,.6)!important;
+  background:var(--panel)!important;
+  border:1px solid var(--border)!important;
+}
+.tournament-bracket-workspace .live-bracket.bracket-maximized .live-bracket-head{
+  flex:0 0 auto;
+  padding-bottom:10px;
+}
+.tournament-bracket-workspace .live-bracket.bracket-maximized .bracket-scroll{
+  flex:1 1 auto!important;
+  width:100%!important;
+  height:auto!important;
+  min-height:0!important;
+  max-height:none!important;
+  overflow:auto!important;
+}
+@media(max-width:680px){
+  .tournament-bracket-workspace .live-bracket.bracket-maximized{
+    inset:4px!important;
+    height:calc(100vh - 8px)!important;
+    padding:10px!important;
+  }
+  .tournament-bracket-workspace .bracket-view-tools .bracket-zoom-slider{
+    width:86px;
+    min-width:66px;
+    margin:0 3px;
+  }
+}
