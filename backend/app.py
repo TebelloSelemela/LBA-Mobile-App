@@ -2985,13 +2985,38 @@ def _balanced_bracket_order(match_count):
     return order
 
 
-def build_fixtures(players, draw_type, doubles_pairs=None, seed_by_rank=False):
-    """Create a seeded/unseeded knockout with balanced BYEs in every branch.
+def _spaced_bye_positions(match_count, bye_count):
+    """Place BYEs at the END of evenly sized groups of first-round fixtures.
 
-    All first-round winners keep their existing match number and fixed
-    progression paths: M1/M2 advance together, M3/M4 advance together, etc.
-    Seeding gives ranking-protected entrants priority for a bye and spreads
-    those seeds across opposite halves/quarters of the bracket.
+    Number of first-round fixtures is slots // 2; the actual bye count is
+    slots - entrants. Spacing responds to BOTH numbers:
+      32 first-round fixtures, 8 BYEs -> matches 4, 8, 12, ... 32
+      16 first-round fixtures, 8 BYEs -> matches 2, 4, 6, ... 16
+      16 first-round fixtures, 4 BYEs -> matches 4, 8, 12, 16
+    For non-divisible counts, integer division gives gaps differing by at
+    most one fixture. This preserves balanced branches without shuffling
+    winners after any results have been recorded.
+    """
+    if match_count < 1 or match_count & (match_count - 1):
+        raise ValueError("A knockout bracket needs a power-of-two match count.")
+    if not 0 <= bye_count < match_count:
+        raise ValueError("A valid draw has fewer BYEs than first-round matches.")
+    if bye_count == 0:
+        return []
+    return [
+        ((index + 1) * match_count // bye_count) - 1
+        for index in range(bye_count)
+    ]
+
+
+def build_fixtures(players, draw_type, doubles_pairs=None, seed_by_rank=False):
+    """Create a knockout with BYEs spaced by the size of its first round.
+
+    An even interval is chosen from first-round match count / BYE count, so
+    the amount of empty slots dictates how frequently BYEs appear. All
+    first-round winners keep the same fixed progression paths: M1/M2
+    advance together, M3/M4 advance together, etc. Ranking protection
+    gives stronger seeds first priority for the distributed BYE slots.
 
     IMPORTANT: Only newly generated draws use this arrangement. Saved
     tournaments and their scored result paths are never reshuffled.
@@ -3017,28 +3042,33 @@ def build_fixtures(players, draw_type, doubles_pairs=None, seed_by_rank=False):
     match_count=slots//2
     bye_count=slots-n
 
-    # The same balanced slot order governs both BYEs and protected seeds.
-    # A pair of first-round matches feeding the same second-round fixture
-    # receives at most one BYE where the entrant count permits it.
+    # BYE *spacing* depends on the number of first-round matches and the
+    # number of empty spots. Match numbers are unchanged for the full bracket.
+    # Example: 8 BYEs among 32 matches -> every 4th fixture receives a BYE.
+    bye_slots=_spaced_bye_positions(match_count,bye_count)
+    bye_positions=set(bye_slots)
     order=_balanced_bracket_order(match_count)
-    bye_positions=set(order[:bye_count])
     fixture_pairs=[[None,None] for _ in range(match_count)]
 
     if seed_by_rank:
         protected=min(_protected_seed_count(n),match_count)
+        # Give top-ranked seeds BYE priority. Within the BYE slots, select
+        # opposite halves/quarters first so strong seeds remain apart.
+        # Any additional protected seeds use the same distributed order.
+        seed_order=[i for i in order if i in bye_positions]
+        seed_order.extend(i for i in order if i not in bye_positions)
         for index in range(protected):
-            # The incoming list is ranked by the draw-generation endpoint.
-            fixture_pairs[order[index]][0]=entrants[index]
+            fixture_pairs[seed_order[index]][0]=entrants[index]
         rest=entrants[protected:]
         random.shuffle(rest)
     else:
-        # Random mode is shuffled at the API boundary. Preserve that entrant
-        # order while distributing the BYE fixtures across the whole draw.
+        # The API already shuffles unseeded entrants. Keep that randomized
+        # order while laying BYEs out evenly across round-one fixtures.
         rest=list(entrants)
 
-    # First allocate BYEs at evenly spaced positions. When seeded, those
-    # positions preferentially coincide with top-ranked entrant positions.
-    for index in order[:bye_count]:
+    # Allocate BYEs at the ends of evenly spaced groups of matches; don't
+    # cluster them at M1/M2 or change pairing rules in later rounds.
+    for index in bye_slots:
         if fixture_pairs[index][0] is None:
             if not rest:
                 raise ValueError("Not enough entrants to allocate BYEs.")
