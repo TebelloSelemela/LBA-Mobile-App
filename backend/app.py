@@ -2963,13 +2963,38 @@ def _protected_seed_count(entrant_count):
     return 0
 
 
-def build_fixtures(players, draw_type, doubles_pairs=None, seed_by_rank=False):
-    """Build a power-of-two knockout bracket.
+def _balanced_bracket_order(match_count):
+    """Distribute priority fixtures across halves, quarters, eighths, etc.
 
-    When Seed by Ranking is enabled, only the strongest selected entrants are
-    protected: 8 entrants -> top 2; 16 -> top 3; 32 -> top 4; 64+ -> top 8.
-    Protected seeds are isolated into different first-round matches and all
-    remaining entrants are randomized around them.
+    The bracket is an ordered binary tree: consecutive first-round matches
+    advance into the same next-round match. The bit-reversed slot order puts
+    the first 2 positions in opposite halves, the first 4 in distinct
+    quarters, the first 8 in distinct eighths, and so on.
+
+    Thus 8 byes in 16 first-round matches occupy 1,9,5,13,3,11,7,15
+    (one per pair of adjacent fixtures), rather than matches 1 through 8.
+    The order is also used to keep protected ranking seeds far apart.
+    """
+    if match_count < 1 or match_count & (match_count - 1):
+        raise ValueError("A knockout bracket needs a power-of-two match count.")
+    order = [0]
+    while len(order) < match_count:
+        order = [2 * position for position in order] + [
+            2 * position + 1 for position in order
+        ]
+    return order
+
+
+def build_fixtures(players, draw_type, doubles_pairs=None, seed_by_rank=False):
+    """Create a seeded/unseeded knockout with balanced BYEs in every branch.
+
+    All first-round winners keep their existing match number and fixed
+    progression paths: M1/M2 advance together, M3/M4 advance together, etc.
+    Seeding gives ranking-protected entrants priority for a bye and spreads
+    those seeds across opposite halves/quarters of the bracket.
+
+    IMPORTANT: Only newly generated draws use this arrangement. Saved
+    tournaments and their scored result paths are never reshuffled.
     """
     import random
     if draw_type.lower() == "doubles":
@@ -2992,74 +3017,52 @@ def build_fixtures(players, draw_type, doubles_pairs=None, seed_by_rank=False):
     match_count=slots//2
     bye_count=slots-n
 
-    if not seed_by_rank:
-        fixture_pairs=[]
-        cursor=0
-        for _ in range(bye_count):
-            fixture_pairs.append((entrants[cursor],{"name":"Bye","ids":""}))
-            cursor+=1
-        while cursor<n:
-            fixture_pairs.append((entrants[cursor],entrants[cursor+1]))
-            cursor+=2
-    else:
+    # The same balanced slot order governs both BYEs and protected seeds.
+    # A pair of first-round matches feeding the same second-round fixture
+    # receives at most one BYE where the entrant count permits it.
+    order=_balanced_bracket_order(match_count)
+    bye_positions=set(order[:bye_count])
+    fixture_pairs=[[None,None] for _ in range(match_count)]
+
+    if seed_by_rank:
         protected=min(_protected_seed_count(n),match_count)
-        fixture_pairs=[[None,None] for _ in range(match_count)]
-        # Spread protected entrants from opposite ends of the bracket.
-        order=[]
-        lo,hi=0,match_count-1
-        while lo<=hi:
-            order.append(lo)
-            if lo!=hi:
-                order.append(hi)
-            lo+=1; hi-=1
-        for idx in range(protected):
-            fixture_pairs[order[idx]][0]=entrants[idx]
-
-        # Byes go to protected seeds first.
-        remaining_byes=bye_count
-        for idx in range(protected):
-            if remaining_byes<=0:
-                break
-            fixture_pairs[order[idx]][1]={"name":"Bye","ids":""}
-            remaining_byes-=1
-
+        for index in range(protected):
+            # The incoming list is ranked by the draw-generation endpoint.
+            fixture_pairs[order[index]][0]=entrants[index]
         rest=entrants[protected:]
         random.shuffle(rest)
+    else:
+        # Random mode is shuffled at the API boundary. Preserve that entrant
+        # order while distributing the BYE fixtures across the whole draw.
+        rest=list(entrants)
 
-        # If more byes are needed, put one randomized real entrant into an
-        # otherwise-empty match and give that entrant the bye. This is what
-        # keeps 10/20/50-player brackets valid without Bye-vs-Bye fixtures.
-        if remaining_byes:
-            for pair in fixture_pairs:
-                if remaining_byes<=0:
-                    break
-                if pair[0] is None and pair[1] is None and rest:
-                    pair[0]=rest.pop()
-                    pair[1]={"name":"Bye","ids":""}
-                    remaining_byes-=1
+    # First allocate BYEs at evenly spaced positions. When seeded, those
+    # positions preferentially coincide with top-ranked entrant positions.
+    for index in order[:bye_count]:
+        if fixture_pairs[index][0] is None:
+            if not rest:
+                raise ValueError("Not enough entrants to allocate BYEs.")
+            fixture_pairs[index][0]=rest.pop(0)
+        fixture_pairs[index][1]={"name":"Bye","ids":""}
 
-        # Protected seeds without a bye receive a randomized opponent.
-        for pair in fixture_pairs:
-            if pair[0] is not None and pair[1] is None and rest:
-                pair[1]=rest.pop()
+    # Fill real first-round matches without changing their bracket positions.
+    for index in range(match_count):
+        pair=fixture_pairs[index]
+        if pair[0] is None:
+            if not rest:
+                raise ValueError("Missing first-round entrant.")
+            pair[0]=rest.pop(0)
+        if pair[1] is None:
+            if not rest:
+                raise ValueError("Missing opponent for first-round match.")
+            pair[1]=rest.pop(0)
 
-        # Fill the remaining empty matches with the randomized field.
-        for pair in fixture_pairs:
-            if pair[0] is None and pair[1] is None:
-                if rest:
-                    pair[0]=rest.pop()
-                if rest:
-                    pair[1]=rest.pop()
-
-        # Defensive completion: there must be no empty slot or Bye-vs-Bye.
-        for pair in fixture_pairs:
-            if pair[0] is None and pair[1] is not None:
-                pair[0]=pair[1]
-                pair[1]={"name":"Bye","ids":""}
-            elif pair[0] is not None and pair[1] is None:
-                pair[1]={"name":"Bye","ids":""}
-            elif pair[0] is None and pair[1] is None:
-                raise ValueError("Could not allocate all entrants into the seeded knockout bracket.")
+    if rest or any(
+        pair[0] is None or pair[1] is None or
+        (pair[0]["name"]=="Bye" and pair[1]["name"]=="Bye")
+        for pair in fixture_pairs
+    ):
+        raise ValueError("Invalid knockout draw allocation.")
 
     return [{
         "match_no":i+1,
